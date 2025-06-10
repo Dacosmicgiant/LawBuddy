@@ -1,4 +1,4 @@
-import { Colors, getButtonColors, getTextColors } from '../constants/Colors'
+import { Colors, getButtonColors, getTextColors } from '../../constants/Colors'
 
 // Contact Info Item Component
 const ContactInfoItem = ({ icon, title, info }) => (

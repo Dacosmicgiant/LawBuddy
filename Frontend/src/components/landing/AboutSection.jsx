@@ -1,4 +1,4 @@
-import { Colors, getTextColors } from '../constants/Colors'
+import { Colors, getTextColors } from '../../constants/Colors'
 
 // Feature Item Component
 const FeatureItem = ({ icon, title, description }) => (

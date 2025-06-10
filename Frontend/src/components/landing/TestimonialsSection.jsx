@@ -1,4 +1,4 @@
-import { Colors, getTextColors } from '../constants/Colors'
+import { Colors, getTextColors } from '../../constants/Colors'
 
 // Star Rating Component
 const StarRating = () => (

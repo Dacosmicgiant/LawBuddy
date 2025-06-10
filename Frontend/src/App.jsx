@@ -1,10 +1,10 @@
-import Navigation from './components/Navigation'
-import HeroSection from './components/HeroSection'
-import AboutSection from './components/AboutSection'
-import FeaturesSection from './components/FeaturesSection'
-import TestimonialsSection from './components/TestimonialsSection'
-import ContactSection from './components/ContactSection'
-import Footer from './components/Footer'
+import Navigation from './components/ui/Navigation'
+import HeroSection from './components/landing/HeroSection'
+import AboutSection from './components/landing/AboutSection'
+import FeaturesSection from './components/landing/FeaturesSection'
+import TestimonialsSection from './components/landing/TestimonialsSection'
+import ContactSection from './components/landing/ContactSection'
+import Footer from './components/ui/Footer'
 
 // Main App Component
 function App() {

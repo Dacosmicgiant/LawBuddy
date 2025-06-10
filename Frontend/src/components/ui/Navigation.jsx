@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Colors, getButtonColors } from '../constants/Colors'
+import { Colors, getButtonColors } from '../../constants/Colors'
 
 const Navigation = ({ scrollToSection }) => {
   const [isMenuOpen, setIsMenuOpen] = useState(false)

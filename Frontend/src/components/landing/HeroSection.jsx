@@ -1,4 +1,4 @@
-import { Colors, getButtonColors, getCardColors, getTextColors } from '../constants/Colors'
+import { Colors, getButtonColors, getCardColors, getTextColors } from '../../constants/Colors'
 
 // Stat Card Component
 const StatCard = ({ number, label }) => (

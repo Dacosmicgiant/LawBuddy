@@ -1,4 +1,4 @@
-import { Colors, getCardColors, getTextColors } from '../constants/Colors'
+import { Colors, getCardColors, getTextColors } from '../../constants/Colors'
 
 // Feature Card Component
 const FeatureCard = ({ icon, title, description }) => (
