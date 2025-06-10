@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Colors, getButtonColors, getTextColors } from '../constants/Colors'
+import GeminiService from '../services/geminiService'
 
 // Import chat components
 import Message from '../components/chat/Message'
@@ -11,10 +12,11 @@ import Sidebar from '../components/chat/Sidebar'
 
 const Chat = () => {
   const navigate = useNavigate()
+  const [geminiService] = useState(() => new GeminiService())
   const [messages, setMessages] = useState([
     {
       id: 1,
-      message: "Hello! I'm LawBuddy, your AI legal assistant specializing in Indian traffic laws. I can help you understand traffic violations, fines, procedures, and your rights. What would you like to know?",
+      message: "Hello! I'm LawBuddy, your AI legal assistant specializing in Indian traffic laws. I can help you understand traffic violations, fines, procedures, and your rights under the Motor Vehicles Act, 1988. What would you like to know?",
       isUser: false,
       timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
     }
@@ -48,6 +50,19 @@ const Chat = () => {
   const messagesEndRef = useRef(null)
   const inputRef = useRef(null)
 
+  // Check if Gemini API is configured
+  useEffect(() => {
+    if (!GeminiService.isConfigured()) {
+      const errorMessage = {
+        id: Date.now(),
+        message: "⚠️ Gemini API is not configured. Please add your VITE_GEMINI_API_KEY to your environment variables to enable AI responses.",
+        isUser: false,
+        timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+      }
+      setMessages(prev => [...prev, errorMessage])
+    }
+  }, [])
+
   // Auto scroll to bottom
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
@@ -74,6 +89,18 @@ const Chat = () => {
   const handleSendMessage = async () => {
     if (!inputMessage.trim() || isLoading) return
 
+    // Check API configuration
+    if (!GeminiService.isConfigured()) {
+      const errorMessage = {
+        id: Date.now(),
+        message: "Please configure your Gemini API key to use LawBuddy. Add VITE_GEMINI_API_KEY to your .env file.",
+        isUser: false,
+        timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+      }
+      setMessages(prev => [...prev, errorMessage])
+      return
+    }
+
     const userMessage = {
       id: Date.now(),
       message: inputMessage.trim(),
@@ -81,38 +108,47 @@ const Chat = () => {
       timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
     }
 
+    // Add user message immediately
     setMessages(prev => [...prev, userMessage])
     setInputMessage('')
     setIsLoading(true)
 
     try {
-      // TODO: Replace with actual Gemini API call
-      await new Promise(resolve => setTimeout(resolve, 1500))
+      // Send message to Gemini API
+      const response = await geminiService.sendMessage(userMessage.message)
       
-      const botResponse = {
-        id: Date.now() + 1,
-        message: `I understand you're asking about "${userMessage.message}". 
-
-Based on Indian traffic laws, here's what you need to know:
-
-This is a simulated response. In the actual implementation, this would be powered by Google's Gemini AI, specifically trained on Indian traffic laws and regulations.
-
-The response would be:
-• Clear and in layman's terms
-• Specific to Indian traffic laws
-• Include relevant sections and penalties
-• Provide actionable advice
-
-Would you like me to clarify any specific aspect of this topic?`,
-        isUser: false,
-        timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+      if (response.success) {
+        const botResponse = {
+          id: Date.now() + 1,
+          message: response.message,
+          isUser: false,
+          timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+        }
+        
+        setMessages(prev => [...prev, botResponse])
+        
+        // Update chat title based on first user message if it's a new chat
+        if (messages.filter(m => m.isUser).length === 0) {
+          updateChatTitle(currentChatId, userMessage.message)
+        }
+      } else {
+        // Handle API error
+        const errorMessage = {
+          id: Date.now() + 1,
+          message: response.message,
+          isUser: false,
+          timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+        }
+        setMessages(prev => [...prev, errorMessage])
+        
+        // Log error for debugging
+        console.error('Gemini API Error:', response.error)
       }
-
-      setMessages(prev => [...prev, botResponse])
     } catch (error) {
+      console.error('Unexpected error:', error)
       const errorMessage = {
         id: Date.now() + 1,
-        message: "I apologize, but I'm experiencing technical difficulties. Please try again in a moment.",
+        message: "I apologize, but I'm experiencing technical difficulties. Please check your internet connection and try again.",
         isUser: false,
         timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
       }
@@ -120,6 +156,21 @@ Would you like me to clarify any specific aspect of this topic?`,
     } finally {
       setIsLoading(false)
     }
+  }
+
+  // Update chat title based on first message
+  const updateChatTitle = (chatId, firstMessage) => {
+    const title = firstMessage.length > 50 
+      ? firstMessage.substring(0, 47) + "..." 
+      : firstMessage
+    
+    setChatHistory(prev => 
+      prev.map(chat => 
+        chat.id === chatId 
+          ? { ...chat, title, preview: firstMessage.substring(0, 50) + "..." }
+          : chat
+      )
+    )
   }
 
   // Handle enter key press
@@ -151,11 +202,14 @@ Would you like me to clarify any specific aspect of this topic?`,
     setMessages([
       {
         id: 1,
-        message: "Hello! I'm LawBuddy, your AI legal assistant specializing in Indian traffic laws. I can help you understand traffic violations, fines, procedures, and your rights. What would you like to know?",
+        message: "Hello! I'm LawBuddy, your AI legal assistant specializing in Indian traffic laws. I can help you understand traffic violations, fines, procedures, and your rights under the Motor Vehicles Act, 1988. What would you like to know?",
         isUser: false,
         timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
       }
     ])
+    
+    // Reset conversation in Gemini service
+    geminiService.resetConversation()
     setIsSidebarOpen(false)
   }
 
@@ -163,6 +217,16 @@ Would you like me to clarify any specific aspect of this topic?`,
   const handleSelectChat = (chatId) => {
     setCurrentChatId(chatId)
     // In a real app, you'd load the messages for this chat
+    // For now, we'll reset to initial state
+    geminiService.resetConversation()
+    setMessages([
+      {
+        id: 1,
+        message: "Hello! I'm LawBuddy, your AI legal assistant specializing in Indian traffic laws. I can help you understand traffic violations, fines, procedures, and your rights under the Motor Vehicles Act, 1988. What would you like to know?",
+        isUser: false,
+        timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+      }
+    ])
     setIsSidebarOpen(false)
   }
 
@@ -171,7 +235,9 @@ Would you like me to clarify any specific aspect of this topic?`,
     setChatHistory(prev => prev.filter(chat => chat.id !== chatId))
     if (chatId === currentChatId && chatHistory.length > 1) {
       const remainingChats = chatHistory.filter(chat => chat.id !== chatId)
-      setCurrentChatId(remainingChats[0]?.id || null)
+      if (remainingChats.length > 0) {
+        handleSelectChat(remainingChats[0].id)
+      }
     }
   }
 
@@ -205,6 +271,16 @@ Would you like me to clarify any specific aspect of this topic?`,
               </button>
 
               <h1 className={`text-lg font-semibold ${getTextColors('heading')}`}>Legal Consultation</h1>
+              
+              {/* API Status Indicator */}
+              <div className="flex items-center gap-2">
+                <div className={`w-2 h-2 rounded-full ${
+                  GeminiService.isConfigured() ? 'bg-green-500' : 'bg-red-500'
+                }`}></div>
+                <span className={`text-xs ${getTextColors('muted')}`}>
+                  {GeminiService.isConfigured() ? 'AI Active' : 'API Not Configured'}
+                </span>
+              </div>
             </div>
 
             {/* User Profile Dropdown */}
@@ -269,16 +345,19 @@ Would you like me to clarify any specific aspect of this topic?`,
                     value={inputMessage}
                     onChange={(e) => setInputMessage(e.target.value)}
                     onKeyPress={handleKeyPress}
-                    placeholder="Ask me about Indian traffic laws, fines, procedures, or your rights..."
+                    placeholder={GeminiService.isConfigured() 
+                      ? "Ask me about Indian traffic laws, fines, procedures, or your rights..."
+                      : "Please configure Gemini API key to start chatting..."
+                    }
                     className={`w-full p-3 border ${Colors.border.neutral[200]} rounded-lg resize-none focus:outline-none focus:ring-2 ${Colors.utility.ring} focus:border-transparent ${getTextColors('body')}`}
                     rows="1"
                     style={{ maxHeight: '120px' }}
-                    disabled={isLoading}
+                    disabled={isLoading || !GeminiService.isConfigured()}
                   />
                 </div>
                 <button
                   onClick={handleSendMessage}
-                  disabled={!inputMessage.trim() || isLoading}
+                  disabled={!inputMessage.trim() || isLoading || !GeminiService.isConfigured()}
                   className={`${getButtonColors('primary')} px-6 py-3 rounded-lg font-medium transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2`}
                 >
                   {isLoading ? (
@@ -294,7 +373,7 @@ Would you like me to clarify any specific aspect of this topic?`,
               
               {/* Disclaimer */}
               <p className={`text-xs ${getTextColors('muted')} mt-2 text-center`}>
-                LawBuddy provides general legal information. For specific legal advice, consult a qualified lawyer.
+                LawBuddy provides general legal information about Indian traffic laws. For specific legal advice, consult a qualified lawyer.
               </p>
             </div>
           </div>
