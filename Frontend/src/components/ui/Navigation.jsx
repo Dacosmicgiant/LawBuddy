@@ -1,12 +1,37 @@
 import { useState } from 'react'
+import { useNavigate, useLocation } from 'react-router-dom'
 import { Colors, getButtonColors } from '../../constants/Colors'
 
 const Navigation = ({ scrollToSection }) => {
   const [isMenuOpen, setIsMenuOpen] = useState(false)
+  const navigate = useNavigate()
+  const location = useLocation()
+  const isLandingPage = location.pathname === '/'
 
   const handleScrollToSection = (sectionId) => {
-    scrollToSection(sectionId)
+    if (isLandingPage) {
+      scrollToSection(sectionId)
+    } else {
+      // If not on landing page, navigate to landing page first
+      navigate('/')
+      setTimeout(() => {
+        document.getElementById(sectionId)?.scrollIntoView({ behavior: 'smooth' })
+      }, 100)
+    }
     setIsMenuOpen(false)
+  }
+
+  const handleTryLawBuddy = () => {
+    navigate('/chat')
+    setIsMenuOpen(false)
+  }
+
+  const handleLogoClick = () => {
+    if (isLandingPage) {
+      scrollToSection('hero')
+    } else {
+      navigate('/')
+    }
   }
 
   return (
@@ -15,7 +40,12 @@ const Navigation = ({ scrollToSection }) => {
         <div className="flex justify-between h-16">
           <div className="flex items-center">
             <div className="flex-shrink-0 flex items-center">
-              <span className={`text-2xl font-bold ${Colors.text.primary[600]}`}>⚖️ LawBuddy</span>
+              <button 
+                onClick={handleLogoClick}
+                className={`text-2xl font-bold ${Colors.text.primary[600]} hover:opacity-80 transition-opacity`}
+              >
+                ⚖️ LawBuddy
+              </button>
             </div>
           </div>
           
@@ -25,7 +55,10 @@ const Navigation = ({ scrollToSection }) => {
             <button onClick={() => handleScrollToSection('about')} className={`${Colors.text.gray[700]} ${Colors.hover.text.primary} transition-colors`}>About</button>
             <button onClick={() => handleScrollToSection('features')} className={`${Colors.text.gray[700]} ${Colors.hover.text.primary} transition-colors`}>Features</button>
             <button onClick={() => handleScrollToSection('contact')} className={`${Colors.text.gray[700]} ${Colors.hover.text.primary} transition-colors`}>Contact</button>
-            <button className={`${getButtonColors('gold')} px-6 py-2 rounded-lg transition-colors font-semibold`}>
+            <button 
+              onClick={handleTryLawBuddy}
+              className={`${getButtonColors('gold')} px-6 py-2 rounded-lg transition-colors font-semibold`}
+            >
               Try LawBuddy
             </button>
           </div>
@@ -51,7 +84,10 @@ const Navigation = ({ scrollToSection }) => {
               <button onClick={() => handleScrollToSection('about')} className={`block px-3 py-2 ${Colors.text.gray[700]} ${Colors.hover.text.primary}`}>About</button>
               <button onClick={() => handleScrollToSection('features')} className={`block px-3 py-2 ${Colors.text.gray[700]} ${Colors.hover.text.primary}`}>Features</button>
               <button onClick={() => handleScrollToSection('contact')} className={`block px-3 py-2 ${Colors.text.gray[700]} ${Colors.hover.text.primary}`}>Contact</button>
-              <button className={`w-full text-left ${getButtonColors('gold')} px-3 py-2 rounded-lg transition-colors font-semibold`}>
+              <button 
+                onClick={handleTryLawBuddy}
+                className={`w-full text-left ${getButtonColors('gold')} px-3 py-2 rounded-lg transition-colors font-semibold`}
+              >
                 Try LawBuddy
               </button>
             </div>

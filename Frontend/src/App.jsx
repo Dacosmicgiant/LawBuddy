@@ -1,27 +1,17 @@
-import Navigation from './components/ui/Navigation'
-import HeroSection from './components/landing/HeroSection'
-import AboutSection from './components/landing/AboutSection'
-import FeaturesSection from './components/landing/FeaturesSection'
-import TestimonialsSection from './components/landing/TestimonialsSection'
-import ContactSection from './components/landing/ContactSection'
-import Footer from './components/ui/Footer'
+import { BrowserRouter as Router, Routes, Route } from 'react-router-dom'
+import LandingPage from './pages/LandingPage'
+import Chat from './pages/Chat'
 
-// Main App Component
 function App() {
-  const scrollToSection = (sectionId) => {
-    document.getElementById(sectionId)?.scrollIntoView({ behavior: 'smooth' })
-  }
-
   return (
-    <div className="min-h-screen bg-white">
-      <Navigation scrollToSection={scrollToSection} />
-      <HeroSection scrollToSection={scrollToSection} />
-      <AboutSection />
-      <FeaturesSection />
-      <TestimonialsSection />
-      <ContactSection />
-      <Footer scrollToSection={scrollToSection} />
-    </div>
+    <Router>
+      <div className="min-h-screen bg-white">
+        <Routes>
+          <Route path="/" element={<LandingPage />} />
+          <Route path="/chat" element={<Chat />} />
+        </Routes>
+      </div>
+    </Router>
   )
 }
 
