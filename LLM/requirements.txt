@@ -1,0 +1,26 @@
+# Mini LLM RAG System - Minimal Core Requirements
+# This file contains only essential dependencies that should install without issues
+
+# Core Deep Learning
+torch>=2.0.0
+transformers>=4.30.0
+tokenizers>=0.13.0
+
+# Data Processing
+numpy>=1.24.0
+pandas>=2.0.0
+
+# Web Framework
+fastapi>=0.100.0
+uvicorn>=0.22.0
+pydantic>=2.0.0
+
+# Utilities
+tqdm>=4.65.0
+requests>=2.31.0
+
+# Optional: Add these one by one if needed
+# matplotlib>=3.7.0
+# scikit-learn>=1.3.0
+# nltk>=3.8.0
+# accelerate>=0.20.0
