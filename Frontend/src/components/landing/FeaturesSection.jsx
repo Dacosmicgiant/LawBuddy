@@ -1,18 +1,161 @@
+// Frontend/src/components/landing/FeaturesSection.jsx
+import { useEffect, useRef } from 'react'
+import { gsap } from 'gsap'
+import { ScrollTrigger } from 'gsap/ScrollTrigger'
 import { Colors, getCardColors, getTextColors } from '../../constants/Colors'
 
-// Feature Card Component
-const FeatureCard = ({ icon, title, description }) => (
-  <div className={`${getCardColors()} rounded-lg p-8 hover:${Colors.utility.shadowXl} transition-all duration-300 border-l-4 ${Colors.border.secondary[500]}`}>
-    <div className={`w-12 h-12 ${Colors.background.secondary[100]} rounded-lg flex items-center justify-center mb-6`}>
-      {icon}
+// Register GSAP plugin
+gsap.registerPlugin(ScrollTrigger)
+
+// Enhanced Feature Card Component with animations
+const FeatureCard = ({ icon, title, description, index }) => {
+  const cardRef = useRef(null)
+  const iconRef = useRef(null)
+
+  useEffect(() => {
+    const card = cardRef.current
+    const iconEl = iconRef.current
+
+    // Scroll-triggered entrance animation
+    ScrollTrigger.create({
+      trigger: card,
+      start: "top 85%",
+      onEnter: () => {
+        gsap.fromTo(card, 
+          { 
+            opacity: 0, 
+            y: 60, 
+            rotationY: 15, 
+            scale: 0.9 
+          },
+          { 
+            opacity: 1, 
+            y: 0, 
+            rotationY: 0, 
+            scale: 1,
+            duration: 0.8,
+            delay: index * 0.15,
+            ease: "power3.out"
+          }
+        )
+
+        // Icon animation
+        gsap.fromTo(iconEl,
+          { scale: 0, rotation: -180 },
+          { 
+            scale: 1, 
+            rotation: 0, 
+            duration: 0.6, 
+            delay: (index * 0.15) + 0.3,
+            ease: "back.out(1.7)" 
+          }
+        )
+      },
+      onLeaveBack: () => {
+        gsap.to(card, { 
+          opacity: 0, 
+          y: 60, 
+          duration: 0.3 
+        })
+      }
+    })
+
+    // Hover animations
+    const handleMouseEnter = () => {
+      gsap.to(card, {
+        y: -10,
+        scale: 1.03,
+        boxShadow: "0 25px 50px rgba(0,0,0,0.15)",
+        duration: 0.3,
+        ease: "power2.out"
+      })
+      
+      gsap.to(iconEl, {
+        scale: 1.1,
+        rotation: 5,
+        duration: 0.3,
+        ease: "power2.out"
+      })
+    }
+
+    const handleMouseLeave = () => {
+      gsap.to(card, {
+        y: 0,
+        scale: 1,
+        boxShadow: "0 10px 20px rgba(0,0,0,0.05)",
+        duration: 0.3,
+        ease: "power2.out"
+      })
+      
+      gsap.to(iconEl, {
+        scale: 1,
+        rotation: 0,
+        duration: 0.3,
+        ease: "power2.out"
+      })
+    }
+
+    card.addEventListener('mouseenter', handleMouseEnter)
+    card.addEventListener('mouseleave', handleMouseLeave)
+
+    return () => {
+      card.removeEventListener('mouseenter', handleMouseEnter)
+      card.removeEventListener('mouseleave', handleMouseLeave)
+    }
+  }, [index])
+
+  return (
+    <div 
+      ref={cardRef}
+      className={`feature-card ${getCardColors()} rounded-lg p-8 border-l-4 ${Colors.border.secondary[500]} cursor-pointer transform transition-transform`}
+    >
+      <div 
+        ref={iconRef}
+        className={`w-12 h-12 ${Colors.background.secondary[100]} rounded-lg flex items-center justify-center mb-6`}
+      >
+        {icon}
+      </div>
+      <h3 className={`text-xl font-bold ${getTextColors('heading')} mb-4`}>{title}</h3>
+      <p className={`${getTextColors('body')}`}>{description}</p>
     </div>
-    <h3 className={`text-xl font-bold ${getTextColors('heading')} mb-4`}>{title}</h3>
-    <p className={`${getTextColors('body')}`}>{description}</p>
-  </div>
-)
+  )
+}
 
 // Features Section Component
 const FeaturesSection = () => {
+  const sectionRef = useRef(null)
+  const titleRef = useRef(null)
+  const subtitleRef = useRef(null)
+  const gridRef = useRef(null)
+
+  useEffect(() => {
+    // Title and subtitle animations
+    ScrollTrigger.create({
+      trigger: sectionRef.current,
+      start: "top 80%",
+      onEnter: () => {
+        gsap.fromTo(titleRef.current,
+          { opacity: 0, y: 50 },
+          { opacity: 1, y: 0, duration: 0.8, ease: "power3.out" }
+        )
+        
+        gsap.fromTo(subtitleRef.current,
+          { opacity: 0, y: 30 },
+          { opacity: 1, y: 0, duration: 0.8, delay: 0.2, ease: "power2.out" }
+        )
+      }
+    })
+
+    // Background animation
+    gsap.to(sectionRef.current, {
+      backgroundPosition: "200% center",
+      duration: 20,
+      repeat: -1,
+      ease: "none"
+    })
+
+  }, [])
+
   const features = [
     {
       icon: (
@@ -71,26 +214,80 @@ const FeaturesSection = () => {
   ]
 
   return (
-    <section id="features" className={`py-20 ${Colors.background.cream}`}>
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+    <section 
+      id="features" 
+      ref={sectionRef}
+      className={`py-20 ${Colors.background.cream} relative overflow-hidden`}
+      style={{
+        background: `linear-gradient(45deg, ${Colors.background.cream}, #fef7cd, ${Colors.background.cream})`,
+        backgroundSize: '400% 400%'
+      }}
+    >
+      {/* Animated background elements */}
+      <div className="absolute inset-0 opacity-5">
+        <div className="absolute top-20 left-10 text-6xl animate-pulse">⚖️</div>
+        <div className="absolute top-40 right-20 text-4xl animate-bounce delay-1000">📋</div>
+        <div className="absolute bottom-40 left-20 text-5xl animate-pulse delay-2000">🏛️</div>
+        <div className="absolute bottom-20 right-10 text-4xl animate-bounce delay-3000">📄</div>
+      </div>
+
+      <div className="relative max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 z-10">
         <div className="text-center mb-16">
-          <h2 className={`text-3xl md:text-4xl font-bold ${getTextColors('heading')} mb-4`}>Professional Legal Features</h2>
-          <p className={`text-xl ${getTextColors('body')} max-w-3xl mx-auto`}>
+          <h2 
+            ref={titleRef}
+            className={`text-3xl md:text-4xl font-bold ${getTextColors('heading')} mb-4`}
+          >
+            Professional Legal Features
+          </h2>
+          <p 
+            ref={subtitleRef}
+            className={`text-xl ${getTextColors('body')} max-w-3xl mx-auto`}
+          >
             Discover how LawBuddy provides professional-grade legal assistance to help you understand and navigate complex legal matters.
           </p>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
+        <div 
+          ref={gridRef}
+          className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8"
+        >
           {features.map((feature, index) => (
             <FeatureCard 
               key={index}
               icon={feature.icon}
               title={feature.title}
               description={feature.description}
+              index={index}
             />
           ))}
         </div>
       </div>
+
+      {/* Floating particles animation */}
+      <div className="absolute inset-0 overflow-hidden pointer-events-none">
+        {[...Array(20)].map((_, i) => (
+          <div
+            key={i}
+            className="absolute w-2 h-2 bg-amber-300/20 rounded-full animate-float"
+            style={{
+              left: `${Math.random() * 100}%`,
+              top: `${Math.random() * 100}%`,
+              animationDelay: `${Math.random() * 5}s`,
+              animationDuration: `${3 + Math.random() * 4}s`
+            }}
+          />
+        ))}
+      </div>
+
+      <style jsx>{`
+        @keyframes float {
+          0%, 100% { transform: translateY(0px); opacity: 0.2; }
+          50% { transform: translateY(-20px); opacity: 0.5; }
+        }
+        .animate-float {
+          animation: float 6s ease-in-out infinite;
+        }
+      `}</style>
     </section>
   )
 }

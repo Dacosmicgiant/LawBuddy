@@ -1,3 +1,4 @@
+// Frontend/src/services/geminiService.js
 import { GoogleGenerativeAI } from '@google/generative-ai';
 
 // Initialize Gemini AI
@@ -152,6 +153,7 @@ class GeminiService {
     this.conversationHistory = [];
   }
 
+  // Regular message sending (non-streaming)
   async sendMessage(userMessage) {
     try {
       // Add user message to conversation history
@@ -182,24 +184,153 @@ class GeminiService {
 
     } catch (error) {
       console.error('Gemini API Error:', error);
+      return this.handleError(error);
+    }
+  }
+
+  // Streaming message sending
+  async sendStreamingMessage(userMessage, onChunk) {
+    try {
+      // Add user message to conversation history
+      this.conversationHistory.push({
+        role: "user",
+        content: userMessage
+      });
+
+      // Create the prompt with context and conversation history
+      const prompt = this.buildPrompt(userMessage);
+
+      // Generate streaming response
+      const result = await this.model.generateContentStream(prompt);
       
-      // Handle specific error types
-      let errorMessage = "I apologize, but I'm experiencing technical difficulties. Please try again in a moment.";
+      let fullResponse = '';
       
-      if (error.message?.includes('API_KEY')) {
-        errorMessage = "API configuration issue. Please check your setup.";
-      } else if (error.message?.includes('RATE_LIMIT')) {
-        errorMessage = "Too many requests. Please wait a moment before trying again.";
-      } else if (error.message?.includes('SAFETY')) {
-        errorMessage = "I cannot provide information on that topic. Please ask about Indian traffic laws and regulations.";
+      // Process streaming chunks
+      for await (const chunk of result.stream) {
+        const chunkText = chunk.text();
+        fullResponse += chunkText;
+        
+        // Call the chunk callback to update UI
+        if (onChunk) {
+          onChunk(chunkText, fullResponse);
+        }
+      }
+
+      // Add complete bot response to conversation history
+      this.conversationHistory.push({
+        role: "assistant", 
+        content: fullResponse
+      });
+
+      return {
+        success: true,
+        message: fullResponse,
+        timestamp: new Date().toISOString()
+      };
+
+    } catch (error) {
+      console.error('Gemini Streaming API Error:', error);
+      return this.handleError(error);
+    }
+  }
+
+  // Real-time streaming with character-by-character delivery
+  async sendCharacterStreamingMessage(userMessage, onCharacter, onComplete) {
+    try {
+      // Add user message to conversation history
+      this.conversationHistory.push({
+        role: "user",
+        content: userMessage
+      });
+
+      // Create the prompt with context and conversation history
+      const prompt = this.buildPrompt(userMessage);
+
+      // Generate streaming response
+      const result = await this.model.generateContentStream(prompt);
+      
+      let fullResponse = '';
+      let charIndex = 0;
+      
+      // Process streaming chunks in real-time
+      for await (const chunk of result.stream) {
+        const chunkText = chunk.text();
+        
+        // Stream each character from the chunk with realistic delays
+        for (let i = 0; i < chunkText.length; i++) {
+          const char = chunkText[i];
+          fullResponse += char;
+          charIndex++;
+          
+          // Call character callback immediately
+          if (onCharacter) {
+            onCharacter(char, fullResponse, charIndex, -1); // -1 indicates unknown total length
+          }
+          
+          // Add realistic delays between characters
+          await this.delay(this.getCharacterDelay(char, chunkText[i + 1]));
+        }
+      }
+
+      // Add complete bot response to conversation history
+      this.conversationHistory.push({
+        role: "assistant", 
+        content: fullResponse
+      });
+
+      // Call completion callback
+      if (onComplete) {
+        onComplete(fullResponse);
       }
 
       return {
-        success: false,
-        message: errorMessage,
-        error: error.message
+        success: true,
+        message: fullResponse,
+        timestamp: new Date().toISOString(),
+        isStreaming: true
       };
+
+    } catch (error) {
+      console.error('Gemini Real-time Streaming Error:', error);
+      return this.handleError(error);
     }
+  }
+
+  // Helper method to create delays
+  delay(ms) {
+    return new Promise(resolve => setTimeout(resolve, ms));
+  }
+
+  // Get realistic character delay based on character type
+  getCharacterDelay(char, nextChar) {
+    // Base delay
+    let delay = 25;
+    
+    // Faster for spaces and newlines
+    if (char === ' ' || char === '\n') {
+      delay = 10;
+    }
+    // Pause after sentences
+    else if (char === '.' || char === '!' || char === '?') {
+      delay = 150;
+    }
+    // Brief pause for commas
+    else if (char === ',') {
+      delay = 80;
+    }
+    // Slightly faster for consecutive letters
+    else if (char.match(/[a-zA-Z]/) && nextChar && nextChar.match(/[a-zA-Z]/)) {
+      delay = 20;
+    }
+    // Slower for numbers and special characters
+    else if (char.match(/[0-9₹]/)) {
+      delay = 40;
+    }
+    
+    // Add small random variation for more natural feel
+    delay += Math.random() * 10 - 5;
+    
+    return Math.max(5, delay); // Minimum 5ms delay
   }
 
   buildPrompt(userMessage) {
@@ -219,6 +350,24 @@ ${conversationContext}
 Current User Question: ${userMessage}
 
 Please provide a helpful, accurate response about Indian traffic laws in simple language that a common person can understand. Include relevant legal sections, practical steps, and required documents where applicable.`;
+  }
+
+  handleError(error) {
+    let errorMessage = "I apologize, but I'm experiencing technical difficulties. Please try again in a moment.";
+    
+    if (error.message?.includes('API_KEY')) {
+      errorMessage = "API configuration issue. Please check your setup.";
+    } else if (error.message?.includes('RATE_LIMIT')) {
+      errorMessage = "Too many requests. Please wait a moment before trying again.";
+    } else if (error.message?.includes('SAFETY')) {
+      errorMessage = "I cannot provide information on that topic. Please ask about Indian traffic laws and regulations.";
+    }
+
+    return {
+      success: false,
+      message: errorMessage,
+      error: error.message
+    };
   }
 
   // Reset conversation for new chat

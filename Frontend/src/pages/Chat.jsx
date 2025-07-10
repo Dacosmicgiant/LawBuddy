@@ -1,3 +1,4 @@
+// Frontend/src/pages/Chat.jsx
 import { useState, useRef, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Colors, getButtonColors, getTextColors } from '../constants/Colors'
@@ -5,6 +6,7 @@ import GeminiService from '../services/geminiService'
 
 // Import chat components
 import Message from '../components/chat/Message'
+import StreamingMessage from '../components/chat/StreamingMessage'
 import TypingIndicator from '../components/chat/TypingIndicator'
 import SuggestedQuestions from '../components/chat/SuggestedQuestions'
 import UserProfileDropdown from '../components/chat/UserProfileDropdown'
@@ -18,7 +20,8 @@ const Chat = () => {
       id: 1,
       message: "Hello! I'm LawBuddy, your AI legal assistant specializing in Indian traffic laws. I can help you understand traffic violations, fines, procedures, and your rights under the Motor Vehicles Act, 1988. What would you like to know?",
       isUser: false,
-      timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+      timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+      isStreaming: false
     }
   ])
   const [inputMessage, setInputMessage] = useState('')
@@ -26,6 +29,7 @@ const Chat = () => {
   const [isSidebarOpen, setIsSidebarOpen] = useState(false)
   const [isProfileDropdownOpen, setIsProfileDropdownOpen] = useState(false)
   const [currentChatId, setCurrentChatId] = useState(1)
+  const [streamingMessage, setStreamingMessage] = useState(null)
   const [chatHistory, setChatHistory] = useState([
     {
       id: 1,
@@ -57,7 +61,8 @@ const Chat = () => {
         id: Date.now(),
         message: "⚠️ Gemini API is not configured. Please add your VITE_GEMINI_API_KEY to your environment variables to enable AI responses.",
         isUser: false,
-        timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+        timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        isStreaming: false
       }
       setMessages(prev => [...prev, errorMessage])
     }
@@ -66,7 +71,7 @@ const Chat = () => {
   // Auto scroll to bottom
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }, [messages, isLoading])
+  }, [messages, isLoading, streamingMessage])
 
   // Focus input on load
   useEffect(() => {
@@ -85,7 +90,7 @@ const Chat = () => {
     return () => document.removeEventListener('mousedown', handleClickOutside)
   }, [isProfileDropdownOpen])
 
-  // Handle sending message
+  // Handle sending message with real-time streaming
   const handleSendMessage = async () => {
     if (!inputMessage.trim() || isLoading) return
 
@@ -95,7 +100,8 @@ const Chat = () => {
         id: Date.now(),
         message: "Please configure your Gemini API key to use LawBuddy. Add VITE_GEMINI_API_KEY to your .env file.",
         isUser: false,
-        timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+        timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        isStreaming: false
       }
       setMessages(prev => [...prev, errorMessage])
       return
@@ -105,7 +111,8 @@ const Chat = () => {
       id: Date.now(),
       message: inputMessage.trim(),
       isUser: true,
-      timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+      timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+      isStreaming: false
     }
 
     // Add user message immediately
@@ -114,46 +121,62 @@ const Chat = () => {
     setIsLoading(true)
 
     try {
-      // Send message to Gemini API
-      const response = await geminiService.sendMessage(userMessage.message)
-      
-      if (response.success) {
-        const botResponse = {
-          id: Date.now() + 1,
-          message: response.message,
-          isUser: false,
-          timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-        }
-        
-        setMessages(prev => [...prev, botResponse])
-        
-        // Update chat title based on first user message if it's a new chat
-        if (messages.filter(m => m.isUser).length === 0) {
-          updateChatTitle(currentChatId, userMessage.message)
-        }
-      } else {
-        // Handle API error
-        const errorMessage = {
-          id: Date.now() + 1,
-          message: response.message,
-          isUser: false,
-          timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-        }
-        setMessages(prev => [...prev, errorMessage])
-        
-        // Log error for debugging
-        console.error('Gemini API Error:', response.error)
+      // Initialize streaming message
+      const streamingId = Date.now() + 1
+      const initialStreamingMessage = {
+        id: streamingId,
+        message: '',
+        isUser: false,
+        timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        isStreaming: true
       }
+      
+      setStreamingMessage(initialStreamingMessage)
+
+      // Send message with real-time character streaming
+      await geminiService.sendCharacterStreamingMessage(
+        userMessage.message,
+        // onCharacter callback - called for each character as it arrives
+        (char, currentText, index, total) => {
+          setStreamingMessage(prev => ({
+            ...prev,
+            message: currentText,
+            progress: total > 0 ? (index / total) * 100 : 0
+          }))
+        },
+        // onComplete callback - called when streaming is finished
+        (finalText) => {
+          // Replace streaming message with final message
+          const finalMessage = {
+            id: streamingId,
+            message: finalText,
+            isUser: false,
+            timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+            isStreaming: false
+          }
+          
+          setMessages(prev => [...prev, finalMessage])
+          setStreamingMessage(null)
+          setIsLoading(false)
+          
+          // Update chat title based on first user message if it's a new chat
+          if (messages.filter(m => m.isUser).length === 0) {
+            updateChatTitle(currentChatId, userMessage.message)
+          }
+        }
+      )
+      
     } catch (error) {
-      console.error('Unexpected error:', error)
+      console.error('Streaming error:', error)
       const errorMessage = {
         id: Date.now() + 1,
         message: "I apologize, but I'm experiencing technical difficulties. Please check your internet connection and try again.",
         isUser: false,
-        timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+        timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        isStreaming: false
       }
       setMessages(prev => [...prev, errorMessage])
-    } finally {
+      setStreamingMessage(null)
       setIsLoading(false)
     }
   }
@@ -204,29 +227,31 @@ const Chat = () => {
         id: 1,
         message: "Hello! I'm LawBuddy, your AI legal assistant specializing in Indian traffic laws. I can help you understand traffic violations, fines, procedures, and your rights under the Motor Vehicles Act, 1988. What would you like to know?",
         isUser: false,
-        timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+        timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        isStreaming: false
       }
     ])
     
     // Reset conversation in Gemini service
     geminiService.resetConversation()
+    setStreamingMessage(null)
     setIsSidebarOpen(false)
   }
 
   // Handle chat selection
   const handleSelectChat = (chatId) => {
     setCurrentChatId(chatId)
-    // In a real app, you'd load the messages for this chat
-    // For now, we'll reset to initial state
     geminiService.resetConversation()
     setMessages([
       {
         id: 1,
         message: "Hello! I'm LawBuddy, your AI legal assistant specializing in Indian traffic laws. I can help you understand traffic violations, fines, procedures, and your rights under the Motor Vehicles Act, 1988. What would you like to know?",
         isUser: false,
-        timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+        timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        isStreaming: false
       }
     ])
+    setStreamingMessage(null)
     setIsSidebarOpen(false)
   }
 
@@ -263,7 +288,7 @@ const Chat = () => {
               {/* Mobile Menu Button */}
               <button
                 onClick={() => setIsSidebarOpen(true)}
-                className="md:hidden p-2 rounded-lg hover:bg-gray-100"
+                className="md:hidden p-2 rounded-lg hover:bg-gray-100 transition-colors"
               >
                 <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 20 20">
                   <path fillRule="evenodd" d="M3 5a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zM3 10a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zM3 15a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1z" clipRule="evenodd" />
@@ -275,7 +300,7 @@ const Chat = () => {
               {/* API Status Indicator */}
               <div className="flex items-center gap-2">
                 <div className={`w-2 h-2 rounded-full ${
-                  GeminiService.isConfigured() ? 'bg-green-500' : 'bg-red-500'
+                  GeminiService.isConfigured() ? 'bg-green-500 animate-pulse' : 'bg-red-500'
                 }`}></div>
                 <span className={`text-xs ${getTextColors('muted')}`}>
                   {GeminiService.isConfigured() ? 'AI Active' : 'API Not Configured'}
@@ -313,25 +338,43 @@ const Chat = () => {
         <div className="flex-1 overflow-hidden">
           <div className="h-full flex flex-col max-w-4xl mx-auto">
             <div className="flex-1 overflow-y-auto px-4 py-6">
-              {/* Welcome message and suggestions (only show when no user messages) */}
-              {messages.filter(m => m.isUser).length === 0 && (
+              {/* Welcome message and suggestions */}
+              {messages.filter(m => m.isUser).length === 0 && !streamingMessage && (
                 <div className="mb-8">
                   <SuggestedQuestions onQuestionClick={handleSuggestedQuestion} />
                 </div>
               )}
 
               {/* Messages */}
-              {messages.map((message) => (
-                <Message
-                  key={message.id}
-                  message={message.message}
-                  isUser={message.isUser}
-                  timestamp={message.timestamp}
-                />
+              {messages.map((message, index) => (
+                <div 
+                  key={message.id} 
+                  className="animate-fadeInUp"
+                  style={{ animationDelay: `${index * 0.1}s` }}
+                >
+                  <Message
+                    message={message.message}
+                    isUser={message.isUser}
+                    timestamp={message.timestamp}
+                    isStreaming={message.isStreaming}
+                  />
+                </div>
               ))}
 
+              {/* Streaming Message */}
+              {streamingMessage && (
+                <div className="animate-fadeInUp">
+                  <StreamingMessage
+                    message={streamingMessage.message}
+                    isUser={streamingMessage.isUser}
+                    timestamp={streamingMessage.timestamp}
+                    progress={streamingMessage.progress}
+                  />
+                </div>
+              )}
+
               {/* Typing indicator */}
-              {isLoading && <TypingIndicator />}
+              {isLoading && !streamingMessage && <TypingIndicator />}
               
               <div ref={messagesEndRef} />
             </div>
@@ -349,7 +392,7 @@ const Chat = () => {
                       ? "Ask me about Indian traffic laws, fines, procedures, or your rights..."
                       : "Please configure Gemini API key to start chatting..."
                     }
-                    className={`w-full p-3 border ${Colors.border.neutral[200]} rounded-lg resize-none focus:outline-none focus:ring-2 ${Colors.utility.ring} focus:border-transparent ${getTextColors('body')}`}
+                    className={`w-full p-3 border ${Colors.border.neutral[200]} rounded-lg resize-none focus:outline-none focus:ring-2 ${Colors.utility.ring} focus:border-transparent ${getTextColors('body')} transition-all duration-200`}
                     rows="1"
                     style={{ maxHeight: '120px' }}
                     disabled={isLoading || !GeminiService.isConfigured()}
@@ -358,12 +401,12 @@ const Chat = () => {
                 <button
                   onClick={handleSendMessage}
                   disabled={!inputMessage.trim() || isLoading || !GeminiService.isConfigured()}
-                  className={`${getButtonColors('primary')} px-6 py-3 rounded-lg font-medium transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2`}
+                  className={`${getButtonColors('primary')} px-6 py-3 rounded-lg font-medium transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2 hover:scale-105 active:scale-95`}
                 >
                   {isLoading ? (
                     <div className={`w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin`}></div>
                   ) : (
-                    <svg className={`w-4 h-4 ${Colors.text.white}`} fill="currentColor" viewBox="0 0 20 20">
+                    <svg className={`w-4 h-4 ${Colors.text.white} transition-transform group-hover:translate-x-1`} fill="currentColor" viewBox="0 0 20 20">
                       <path d="M10.894 2.553a1 1 0 00-1.788 0l-7 14a1 1 0 001.169 1.409l5-1.429A1 1 0 009 15.571V11a1 1 0 112 0v4.571a1 1 0 00.725.962l5 1.428a1 1 0 001.17-1.408l-7-14z" />
                     </svg>
                   )}
@@ -379,6 +422,23 @@ const Chat = () => {
           </div>
         </div>
       </div>
+
+      <style jsx>{`
+        @keyframes fadeInUp {
+          from {
+            opacity: 0;
+            transform: translateY(20px);
+          }
+          to {
+            opacity: 1;
+            transform: translateY(0);
+          }
+        }
+
+        .animate-fadeInUp {
+          animation: fadeInUp 0.4s ease-out forwards;
+        }
+      `}</style>
     </div>
   )
 }
