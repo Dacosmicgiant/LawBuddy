@@ -8,7 +8,7 @@ from app.core.database import get_database
 from app.core.security import verify_token, AuthenticationError
 from app.models.user import User
 from app.services.auth_service import AuthService
-from app.services.chat_service import ChatService
+from app.services.chat_service import EnhancedChatService  # Fixed import
 from app.services.ai_service import AIService
 from app.schemas.common import PaginationParams
 
@@ -78,9 +78,9 @@ async def get_auth_service(
 
 async def get_chat_service(
     db: AsyncIOMotorDatabase = Depends(get_db)
-) -> ChatService:
+) -> EnhancedChatService:  # Fixed return type
     """Get chat service"""
-    return ChatService(db)
+    return EnhancedChatService(db)
 
 async def get_ai_service(
     db: AsyncIOMotorDatabase = Depends(get_db)
@@ -215,7 +215,7 @@ async def get_admin_user(
 async def verify_chat_ownership(
     chat_id: str,
     current_user: User = Depends(get_current_active_user),
-    chat_service: ChatService = Depends(get_chat_service)
+    chat_service: EnhancedChatService = Depends(get_chat_service)  # Fixed type
 ):
     """Verify that the current user owns the specified chat"""
     try:

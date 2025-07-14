@@ -11,8 +11,8 @@ from app.api.deps import (
     check_general_rate_limit,
     check_ai_rate_limit
 )
-from app.services.enhanced_chat_service import EnhancedChatService
-from app.services.enhanced_ai_service import AdvancedAIService
+from app.services.chat_service import EnhancedChatService
+from app.services.ai_service import AIService
 from app.schemas.chat import (
     ChatSessionCreate,
     ChatSessionUpdate,
@@ -30,7 +30,7 @@ from app.websocket.manager import connection_manager
 router = APIRouter()
 
 @router.post("/", response_model=ChatSessionResponse, status_code=status.HTTP_201_CREATED)
-async def create_enhanced_chat_session(
+async def create_chat_session(
     chat_data: ChatSessionCreate,
     current_user: User = Depends(get_current_active_user),
     db: AsyncIOMotorDatabase = Depends(get_db),
@@ -67,8 +67,180 @@ async def create_enhanced_chat_session(
             detail="An error occurred while creating chat session"
         )
 
+@router.get("/", response_model=ChatHistoryResponse)
+async def get_user_chats(
+    status_filter: Optional[ChatStatus] = Query(None, description="Filter by chat status"),
+    pagination: PaginationParams = Depends(get_pagination_params),
+    current_user: User = Depends(get_current_active_user),
+    db: AsyncIOMotorDatabase = Depends(get_db),
+    _: None = Depends(check_general_rate_limit)
+):
+    """
+    Get user's chat sessions with pagination and filtering
+    """
+    try:
+        chat_service = EnhancedChatService(db)
+        
+        skip = (pagination.page - 1) * pagination.size
+        
+        # Get chat sessions
+        chats = await chat_service.get_user_chat_sessions(
+            current_user, 
+            status=status_filter, 
+            limit=pagination.size, 
+            skip=skip
+        )
+        
+        # Get total count
+        query = {
+            "user_id": current_user.id,
+            "status": {"$ne": ChatStatus.DELETED}
+        }
+        if status_filter:
+            query["status"] = status_filter
+            
+        total = await chat_service.chat_sessions_collection.count_documents(query)
+        
+        # Convert to response format
+        chat_responses = []
+        for chat in chats:
+            chat_response = ChatSessionResponse(
+                id=str(chat.id),
+                title=chat.title,
+                preview=chat.preview,
+                status=chat.status,
+                metadata=chat.metadata.dict(),
+                tags=chat.tags,
+                created_at=chat.created_at.isoformat(),
+                updated_at=chat.updated_at.isoformat(),
+                last_message_at=chat.last_message_at.isoformat() if chat.last_message_at else None
+            )
+            chat_responses.append(chat_response)
+        
+        return ChatHistoryResponse(
+            chat_sessions=chat_responses,
+            total=total,
+            page=pagination.page,
+            size=pagination.size,
+            has_next=skip + pagination.size < total
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="An error occurred while fetching chat sessions"
+        )
+
+@router.get("/{chat_id}", response_model=ChatSessionResponse)
+async def get_chat_session(
+    chat_id: str,
+    current_user: User = Depends(get_current_active_user),
+    db: AsyncIOMotorDatabase = Depends(get_db),
+    _: None = Depends(check_general_rate_limit)
+):
+    """
+    Get a specific chat session
+    """
+    try:
+        chat_service = EnhancedChatService(db)
+        chat = await chat_service.get_chat_session(chat_id, current_user)
+        
+        return ChatSessionResponse(
+            id=str(chat.id),
+            title=chat.title,
+            preview=chat.preview,
+            status=chat.status,
+            metadata=chat.metadata.dict(),
+            tags=chat.tags,
+            created_at=chat.created_at.isoformat(),
+            updated_at=chat.updated_at.isoformat(),
+            last_message_at=chat.last_message_at.isoformat() if chat.last_message_at else None
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="An error occurred while fetching chat session"
+        )
+
+@router.put("/{chat_id}", response_model=ChatSessionResponse)
+async def update_chat_session(
+    chat_id: str,
+    update_data: ChatSessionUpdate,
+    current_user: User = Depends(get_current_active_user),
+    db: AsyncIOMotorDatabase = Depends(get_db),
+    _: None = Depends(check_general_rate_limit)
+):
+    """
+    Update a chat session
+    """
+    try:
+        chat_service = EnhancedChatService(db)
+        chat = await chat_service.update_chat_session(chat_id, current_user, update_data)
+        
+        return ChatSessionResponse(
+            id=str(chat.id),
+            title=chat.title,
+            preview=chat.preview,
+            status=chat.status,
+            metadata=chat.metadata.dict(),
+            tags=chat.tags,
+            created_at=chat.created_at.isoformat(),
+            updated_at=chat.updated_at.isoformat(),
+            last_message_at=chat.last_message_at.isoformat() if chat.last_message_at else None
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="An error occurred while updating chat session"
+        )
+
+@router.delete("/{chat_id}", response_model=SuccessResponse)
+async def delete_chat_session(
+    chat_id: str,
+    hard_delete: bool = Query(False, description="Permanently delete (cannot be undone)"),
+    current_user: User = Depends(get_current_active_user),
+    db: AsyncIOMotorDatabase = Depends(get_db),
+    _: None = Depends(check_general_rate_limit)
+):
+    """
+    Delete a chat session
+    """
+    try:
+        chat_service = EnhancedChatService(db)
+        success = await chat_service.delete_chat_session(chat_id, current_user, soft_delete=not hard_delete)
+        
+        if success:
+            return SuccessResponse(
+                message="Chat session deleted successfully",
+                data={
+                    "chat_id": chat_id,
+                    "hard_delete": hard_delete
+                }
+            )
+        else:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Failed to delete chat session"
+            )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="An error occurred while deleting chat session"
+        )
+
 @router.post("/{chat_id}/messages", response_model=MessageResponse, status_code=status.HTTP_201_CREATED)
-async def send_enhanced_message(
+async def send_message(
     chat_id: str,
     message_data: MessageCreate,
     background_tasks: BackgroundTasks,
@@ -91,7 +263,7 @@ async def send_enhanced_message(
     """
     try:
         chat_service = EnhancedChatService(db)
-        ai_service = AdvancedAIService(db)
+        ai_service = AIService(db)
         
         # Add user message with status tracking
         user_message = await chat_service.add_message_with_status_tracking(
@@ -139,7 +311,7 @@ async def generate_ai_response_background(
     """Background task for AI response generation"""
     try:
         chat_service = EnhancedChatService(db)
-        ai_service = AdvancedAIService(db)
+        ai_service = AIService(db)
         
         # Create pending AI message
         ai_message_create = MessageCreate(
@@ -217,190 +389,8 @@ async def generate_ai_response_background(
         if 'stream_id' in locals():
             await chat_service.fail_message(stream_id, f"Background generation error: {str(e)}")
 
-@router.post("/{chat_id}/messages/{message_id}/regenerate", response_model=MessageResponse)
-async def regenerate_message(
-    chat_id: str,
-    message_id: str,
-    background_tasks: BackgroundTasks,
-    current_user: User = Depends(get_current_active_user),
-    db: AsyncIOMotorDatabase = Depends(get_db),
-    response_format: ResponseFormat = Query(ResponseFormat.MARKDOWN, description="Response format"),
-    _: None = Depends(check_ai_rate_limit)
-):
-    """
-    Regenerate an AI response or create an alternative version
-    
-    **Features:**
-    - Creates new conversation branch
-    - Maintains message history
-    - Supports different response formats
-    """
-    try:
-        chat_service = EnhancedChatService(db)
-        
-        # Create regenerated message
-        regenerated_message = await chat_service.regenerate_message(message_id, current_user)
-        
-        # If it's an AI message, generate new response in background
-        if regenerated_message.role == MessageRole.ASSISTANT:
-            # Get the user message that prompted this response
-            messages = await chat_service.get_active_messages(chat_id, current_user)
-            user_message = None
-            
-            for msg in reversed(messages):
-                if msg.role == MessageRole.USER and msg.timestamp < regenerated_message.timestamp:
-                    user_message = msg
-                    break
-            
-            if user_message:
-                background_tasks.add_task(
-                    regenerate_ai_response_background,
-                    chat_id, user_message.content, current_user, db, 
-                    regenerated_message.stream_id, response_format
-                )
-        
-        return MessageResponse(
-            id=str(regenerated_message.id),
-            chat_session_id=str(regenerated_message.chat_session_id),
-            role=regenerated_message.role,
-            content=regenerated_message.content,
-            message_type=regenerated_message.message_type,
-            ai_metadata=regenerated_message.ai_metadata.dict() if regenerated_message.ai_metadata else None,
-            formatting=regenerated_message.formatting.dict() if regenerated_message.formatting else None,
-            timestamp=regenerated_message.timestamp.isoformat(),
-            created_at=regenerated_message.created_at.isoformat()
-        )
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="An error occurred while regenerating message"
-        )
-
-async def regenerate_ai_response_background(
-    chat_id: str,
-    user_message: str,
-    user: User,
-    db: AsyncIOMotorDatabase,
-    stream_id: str,
-    response_format: ResponseFormat
-):
-    """Background task for AI response regeneration"""
-    try:
-        chat_service = EnhancedChatService(db)
-        ai_service = AdvancedAIService(db)
-        
-        # Start streaming for regeneration
-        await chat_service.start_message_streaming(stream_id)
-        
-        # Generate new AI response (force regeneration)
-        ai_response = await ai_service.generate_response(
-            user_message,
-            chat_id,
-            user,
-            response_format=response_format,
-            regenerate=True  # Force regeneration
-        )
-        
-        if ai_response["success"]:
-            await chat_service.complete_streaming_message(
-                stream_id,
-                ai_response["content"],
-                ai_response["metadata"],
-                ai_response.get("formatting")
-            )
-        else:
-            await chat_service.fail_message(stream_id, ai_response.get("content", "Regeneration failed"))
-            
-    except Exception as e:
-        await chat_service.fail_message(stream_id, f"Regeneration error: {str(e)}")
-
-@router.get("/{chat_id}/branches", response_model=List[Dict[str, Any]])
-async def get_conversation_branches(
-    chat_id: str,
-    current_user: User = Depends(get_current_active_user),
-    db: AsyncIOMotorDatabase = Depends(get_db),
-    _: None = Depends(check_general_rate_limit)
-):
-    """
-    Get all conversation branches for a chat session
-    
-    **Returns:**
-    - List of branches with metadata
-    - Branch points and reasons
-    - Message counts per branch
-    """
-    try:
-        chat_service = EnhancedChatService(db)
-        branches = await chat_service.get_conversation_branches(chat_id, current_user)
-        return branches
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="An error occurred while fetching conversation branches"
-        )
-
-@router.post("/{chat_id}/branches/{branch_id}/switch", response_model=SuccessResponse)
-async def switch_conversation_branch(
-    chat_id: str,
-    branch_id: str,
-    current_user: User = Depends(get_current_active_user),
-    db: AsyncIOMotorDatabase = Depends(get_db),
-    _: None = Depends(check_general_rate_limit)
-):
-    """
-    Switch to a different conversation branch
-    
-    **Features:**
-    - Activates selected branch
-    - Deactivates other branches
-    - Updates conversation context
-    """
-    try:
-        chat_service = EnhancedChatService(db)
-        success = await chat_service.switch_conversation_branch(chat_id, branch_id, current_user)
-        
-        if success:
-            # Notify WebSocket clients of branch switch
-            await connection_manager.broadcast_to_chat(
-                chat_id,
-                {
-                    "type": "branch_switched",
-                    "metadata": {
-                        "chat_id": chat_id,
-                        "branch_id": branch_id
-                    }
-                }
-            )
-            
-            return SuccessResponse(
-                message="Successfully switched to conversation branch",
-                data={
-                    "chat_id": chat_id,
-                    "branch_id": branch_id
-                }
-            )
-        else:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Failed to switch conversation branch"
-            )
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="An error occurred while switching conversation branch"
-        )
-
 @router.get("/{chat_id}/messages", response_model=MessageHistoryResponse)
-async def get_enhanced_chat_messages(
+async def get_chat_messages(
     chat_id: str,
     branch_id: Optional[str] = Query(None, description="Specific branch to get messages from"),
     include_inactive: bool = Query(False, description="Include messages from inactive branches"),
@@ -492,6 +482,106 @@ async def get_enhanced_chat_messages(
             detail="An error occurred while fetching chat messages"
         )
 
+@router.post("/{chat_id}/messages/{message_id}/regenerate", response_model=MessageResponse)
+async def regenerate_message(
+    chat_id: str,
+    message_id: str,
+    background_tasks: BackgroundTasks,
+    current_user: User = Depends(get_current_active_user),
+    db: AsyncIOMotorDatabase = Depends(get_db),
+    response_format: ResponseFormat = Query(ResponseFormat.MARKDOWN, description="Response format"),
+    _: None = Depends(check_ai_rate_limit)
+):
+    """
+    Regenerate an AI response or create an alternative version
+    
+    **Features:**
+    - Creates new conversation branch
+    - Maintains message history
+    - Supports different response formats
+    """
+    try:
+        chat_service = EnhancedChatService(db)
+        
+        # Create regenerated message
+        regenerated_message = await chat_service.regenerate_message(message_id, current_user)
+        
+        # If it's an AI message, generate new response in background
+        if regenerated_message.role == MessageRole.ASSISTANT:
+            # Get the user message that prompted this response
+            messages = await chat_service.get_active_messages(chat_id, current_user)
+            user_message = None
+            
+            for msg in reversed(messages):
+                if msg.role == MessageRole.USER and msg.timestamp < regenerated_message.timestamp:
+                    user_message = msg
+                    break
+            
+            if user_message:
+                background_tasks.add_task(
+                    regenerate_ai_response_background,
+                    chat_id, user_message.content, current_user, db, 
+                    regenerated_message.stream_id, response_format
+                )
+        
+        return MessageResponse(
+            id=str(regenerated_message.id),
+            chat_session_id=str(regenerated_message.chat_session_id),
+            role=regenerated_message.role,
+            content=regenerated_message.content,
+            message_type=regenerated_message.message_type,
+            ai_metadata=regenerated_message.ai_metadata.dict() if regenerated_message.ai_metadata else None,
+            formatting=regenerated_message.formatting.dict() if regenerated_message.formatting else None,
+            timestamp=regenerated_message.timestamp.isoformat(),
+            created_at=regenerated_message.created_at.isoformat()
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="An error occurred while regenerating message"
+        )
+
+async def regenerate_ai_response_background(
+    chat_id: str,
+    user_message: str,
+    user: User,
+    db: AsyncIOMotorDatabase,
+    stream_id: str,
+    response_format: ResponseFormat
+):
+    """Background task for AI response regeneration"""
+    try:
+        chat_service = EnhancedChatService(db)
+        ai_service = AIService(db)
+        
+        # Start streaming for regeneration
+        await chat_service.start_message_streaming(stream_id)
+        
+        # Generate new AI response (force regeneration)
+        ai_response = await ai_service.generate_response(
+            user_message,
+            chat_id,
+            user,
+            response_format=response_format,
+            regenerate=True  # Force regeneration
+        )
+        
+        if ai_response["success"]:
+            await chat_service.complete_streaming_message(
+                stream_id,
+                ai_response["content"],
+                ai_response["metadata"],
+                ai_response.get("formatting")
+            )
+        else:
+            await chat_service.fail_message(stream_id, ai_response.get("content", "Regeneration failed"))
+            
+    except Exception as e:
+        await chat_service.fail_message(stream_id, f"Regeneration error: {str(e)}")
+
 @router.post("/{chat_id}/messages/{message_id}/interact", response_model=SuccessResponse)
 async def update_message_interaction(
     chat_id: str,
@@ -539,8 +629,90 @@ async def update_message_interaction(
             detail="An error occurred while updating message interaction"
         )
 
+@router.get("/{chat_id}/branches", response_model=List[Dict[str, Any]])
+async def get_conversation_branches(
+    chat_id: str,
+    current_user: User = Depends(get_current_active_user),
+    db: AsyncIOMotorDatabase = Depends(get_db),
+    _: None = Depends(check_general_rate_limit)
+):
+    """
+    Get all conversation branches for a chat session
+    
+    **Returns:**
+    - List of branches with metadata
+    - Branch points and reasons
+    - Message counts per branch
+    """
+    try:
+        chat_service = EnhancedChatService(db)
+        branches = await chat_service.get_conversation_branches(chat_id, current_user)
+        return branches
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="An error occurred while fetching conversation branches"
+        )
+
+@router.post("/{chat_id}/branches/{branch_id}/switch", response_model=SuccessResponse)
+async def switch_conversation_branch(
+    chat_id: str,
+    branch_id: str,
+    current_user: User = Depends(get_current_active_user),
+    db: AsyncIOMotorDatabase = Depends(get_db),
+    _: None = Depends(check_general_rate_limit)
+):
+    """
+    Switch to a different conversation branch
+    
+    **Features:**
+    - Activates selected branch
+    - Deactivates other branches
+    - Updates conversation context
+    """
+    try:
+        chat_service = EnhancedChatService(db)
+        success = await chat_service.switch_conversation_branch(chat_id, branch_id, current_user)
+        
+        if success:
+            # Notify WebSocket clients of branch switch
+            await connection_manager.broadcast_to_chat(
+                chat_id,
+                {
+                    "type": "branch_switched",
+                    "metadata": {
+                        "chat_id": chat_id,
+                        "branch_id": branch_id
+                    }
+                }
+            )
+            
+            return SuccessResponse(
+                message="Successfully switched to conversation branch",
+                data={
+                    "chat_id": chat_id,
+                    "branch_id": branch_id
+                }
+            )
+        else:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Failed to switch conversation branch"
+            )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="An error occurred while switching conversation branch"
+        )
+
 @router.get("/{chat_id}/analytics", response_model=Dict[str, Any])
-async def get_enhanced_chat_analytics(
+async def get_chat_analytics(
     chat_id: str,
     current_user: User = Depends(get_current_active_user),
     db: AsyncIOMotorDatabase = Depends(get_db),
@@ -558,7 +730,7 @@ async def get_enhanced_chat_analytics(
     """
     try:
         chat_service = EnhancedChatService(db)
-        ai_service = AdvancedAIService(db)
+        ai_service = AIService(db)
         
         # Verify chat ownership
         chat = await chat_service.get_chat_session(chat_id, current_user)
@@ -737,6 +909,86 @@ async def export_conversation(
             detail="An error occurred while exporting conversation"
         )
 
+@router.get("/search", response_model=MessageHistoryResponse)
+async def search_messages(
+    query: str = Query(..., min_length=3, description="Search query"),
+    chat_id: Optional[str] = Query(None, description="Limit search to specific chat"),
+    pagination: PaginationParams = Depends(get_pagination_params),
+    current_user: User = Depends(get_current_active_user),
+    db: AsyncIOMotorDatabase = Depends(get_db),
+    _: None = Depends(check_general_rate_limit)
+):
+    """
+    Search messages across user's chats
+    """
+    try:
+        chat_service = EnhancedChatService(db)
+        
+        skip = (pagination.page - 1) * pagination.size
+        
+        # Perform search
+        messages, total = await chat_service.search_messages(
+            current_user, 
+            query, 
+            chat_id=chat_id, 
+            limit=pagination.size, 
+            skip=skip
+        )
+        
+        # Convert to response format
+        message_responses = []
+        for msg in messages:
+            message_response = MessageResponse(
+                id=str(msg.id),
+                chat_session_id=str(msg.chat_session_id),
+                role=msg.role,
+                content=msg.content,
+                message_type=msg.message_type,
+                ai_metadata=msg.ai_metadata.dict() if msg.ai_metadata else None,
+                formatting=msg.formatting.dict() if msg.formatting else None,
+                timestamp=msg.timestamp.isoformat(),
+                created_at=msg.created_at.isoformat()
+            )
+            message_responses.append(message_response)
+        
+        return MessageHistoryResponse(
+            messages=message_responses,
+            total=total,
+            page=pagination.page,
+            size=pagination.size,
+            has_next=skip + pagination.size < total
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="An error occurred while searching messages"
+        )
+
+@router.get("/statistics", response_model=Dict[str, Any])
+async def get_user_chat_statistics(
+    current_user: User = Depends(get_current_active_user),
+    db: AsyncIOMotorDatabase = Depends(get_db),
+    _: None = Depends(check_general_rate_limit)
+):
+    """
+    Get comprehensive chat statistics for the user
+    """
+    try:
+        chat_service = EnhancedChatService(db)
+        statistics = await chat_service.get_chat_statistics(current_user)
+        return statistics
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="An error occurred while fetching chat statistics"
+        )
+
 def _format_as_markdown(export_data: Dict[str, Any]) -> str:
     """Format conversation as markdown"""
     content = f"# {export_data['chat_session']['title']}\n\n"
@@ -774,15 +1026,15 @@ def _format_as_text(export_data: Dict[str, Any]) -> str:
     return content
 
 @router.get("/health", response_model=Dict[str, Any])
-async def get_enhanced_chat_health(
+async def get_chat_service_health(
     db: AsyncIOMotorDatabase = Depends(get_db)
 ):
     """
-    Get health status of enhanced chat services
+    Get health status of chat services
     """
     try:
         chat_service = EnhancedChatService(db)
-        ai_service = AdvancedAIService(db)
+        ai_service = AIService(db)
         
         # Check database connectivity
         await db.command("ping")

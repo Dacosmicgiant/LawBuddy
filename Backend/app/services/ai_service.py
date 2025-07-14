@@ -566,3 +566,116 @@ class AIService:
             "cache_entries": len(self.response_cache),
             "service_available": self.is_available()
         }
+    async def generate_streaming_response(
+        self, 
+        user_message: str, 
+        chat_session_id: str,
+        user: User,
+        response_format: ResponseFormat = ResponseFormat.MARKDOWN
+    ):
+        """Generate streaming AI response (async generator)"""
+        
+        if not self.model:
+            yield {
+                "type": "error",
+                "content": "AI service is currently unavailable",
+                "metadata": None
+            }
+            return
+        
+        try:
+            # For now, we'll simulate streaming by yielding chunks
+            # In a real implementation, you'd use the Gemini streaming API
+            
+            # Generate full response first
+            response_data = await self.generate_response(
+                user_message, chat_session_id, user, response_format, regenerate=False
+            )
+            
+            if not response_data["success"]:
+                yield {
+                    "type": "error",
+                    "content": response_data["content"],
+                    "metadata": None
+                }
+                return
+            
+            # Simulate streaming by breaking response into chunks
+            content = response_data["content"]
+            words = content.split(" ")
+            chunk_size = 5  # Words per chunk
+            
+            current_chunk = ""
+            for i, word in enumerate(words):
+                current_chunk += word + " "
+                
+                if (i + 1) % chunk_size == 0 or i == len(words) - 1:
+                    yield {
+                        "type": "chunk",
+                        "content": current_chunk,
+                        "metadata": None
+                    }
+                    current_chunk = ""
+                    
+                    # Small delay to simulate real streaming
+                    await asyncio.sleep(0.1)
+            
+            # Send completion
+            yield {
+                "type": "complete",
+                "content": content,
+                "metadata": response_data["metadata"]
+            }
+            
+        except Exception as e:
+            logger.error(f"Error in streaming response: {e}")
+            yield {
+                "type": "error",
+                "content": f"Streaming error: {str(e)}",
+                "metadata": None
+            }
+
+    def _extract_formatting(self, content: str) -> MessageFormatting:
+        """Extract formatting information from content (if missing from original)"""
+        import re
+        
+        # Detect code blocks
+        code_blocks = []
+        code_pattern = r'```(\w*)\n(.*?)\n```'
+        matches = re.findall(code_pattern, content, re.DOTALL)
+        for language, code in matches:
+            code_blocks.append({"language": language or "text", "code": code})
+        
+        # Detect markdown elements
+        markdown_elements = []
+        if re.search(r'#{1,6}\s', content):
+            markdown_elements.append("headers")
+        if re.search(r'\*\*.*?\*\*', content):
+            markdown_elements.append("bold")
+        if re.search(r'\*.*?\*', content):
+            markdown_elements.append("italics")
+        if re.search(r'^\s*[-*+]\s', content, re.MULTILINE):
+            markdown_elements.append("bullet_lists")
+        if re.search(r'^\s*\d+\.\s', content, re.MULTILINE):
+            markdown_elements.append("numbered_lists")
+        if re.search(r'^\s*>\s', content, re.MULTILINE):
+            markdown_elements.append("blockquotes")
+        
+        # Detect tables
+        has_tables = bool(re.search(r'\|.*\|', content))
+        
+        # Detect sections (headers)
+        sections = re.findall(r'#{1,6}\s+(.*)', content)
+        
+        # Extract citations (legal references)
+        citations = self._extract_legal_sources(content)
+        
+        return MessageFormatting(
+            has_formatting=bool(markdown_elements or code_blocks),
+            sections=sections,
+            citations=citations,
+            code_blocks=code_blocks,
+            markdown_elements=markdown_elements,
+            has_tables=has_tables,
+            has_lists="bullet_lists" in markdown_elements or "numbered_lists" in markdown_elements
+        )

@@ -672,3 +672,187 @@ class EnhancedChatService:
         
         for stream_id in expired_streams:
             await self.fail_message(stream_id, "Streaming timeout")
+    async def _update_chat_metadata(self, chat_id: str, content: str):
+        """Update chat metadata after adding a user message"""
+        
+        # Extract legal categories from content
+        legal_categories = self._extract_legal_categories(content)
+        
+        update_dict = {
+            "$inc": {"metadata.message_count": 1},
+            "$set": {
+                "last_message_at": datetime.utcnow(),
+                "updated_at": datetime.utcnow()
+            }
+        }
+        
+        # Add legal categories if found
+        if legal_categories:
+            update_dict["$addToSet"] = {"metadata.legal_categories": {"$each": legal_categories}}
+        
+        # Update conversation length
+        update_dict["$inc"]["metadata.conversation_length"] = len(content)
+        
+        await self.chat_sessions_collection.update_one(
+            {"_id": ObjectId(chat_id)},
+            update_dict
+        )
+
+    async def get_user_chat_sessions(
+        self, 
+        user: User, 
+        status: Optional[ChatStatus] = None,
+        limit: int = 50,
+        skip: int = 0
+    ) -> List[ChatSession]:
+        """Get user's chat sessions with pagination"""
+        
+        query = {
+            "user_id": user.id,
+            "status": {"$ne": ChatStatus.DELETED}
+        }
+        
+        if status:
+            query["status"] = status
+        
+        cursor = self.chat_sessions_collection.find(query).sort("updated_at", -1).skip(skip).limit(limit)
+        chat_docs = await cursor.to_list(length=limit)
+        
+        return [ChatSession(**doc) for doc in chat_docs]
+
+    async def update_chat_session(self, chat_id: str, user: User, update_data: ChatSessionUpdate) -> ChatSession:
+        """Update a chat session"""
+        
+        # Verify chat ownership
+        chat = await self.get_chat_session(chat_id, user)
+        
+        # Prepare update dictionary
+        update_dict = {"updated_at": datetime.utcnow()}
+        
+        if update_data.title is not None:
+            update_dict["title"] = update_data.title
+        
+        if update_data.status is not None:
+            update_dict["status"] = update_data.status
+        
+        if update_data.tags is not None:
+            update_dict["tags"] = update_data.tags
+        
+        if update_data.context_window_size is not None:
+            update_dict["context_window_size"] = update_data.context_window_size
+        
+        # Update in database
+        result = await self.chat_sessions_collection.update_one(
+            {"_id": ObjectId(chat_id)},
+            {"$set": update_dict}
+        )
+        
+        if result.modified_count == 0:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Failed to update chat session"
+            )
+        
+        # Return updated chat
+        return await self.get_chat_session(chat_id, user)
+
+    async def delete_chat_session(self, chat_id: str, user: User, soft_delete: bool = True) -> bool:
+        """Delete a chat session (soft delete by default)"""
+        
+        # Verify chat ownership
+        await self.get_chat_session(chat_id, user)
+        
+        if soft_delete:
+            # Soft delete - just mark as deleted
+            result = await self.chat_sessions_collection.update_one(
+                {"_id": ObjectId(chat_id)},
+                {
+                    "$set": {
+                        "status": ChatStatus.DELETED,
+                        "updated_at": datetime.utcnow()
+                    }
+                }
+            )
+        else:
+            # Hard delete - remove from database
+            result = await self.chat_sessions_collection.delete_one({"_id": ObjectId(chat_id)})
+            
+            # Also delete all messages in this chat
+            await self.messages_collection.delete_many({"chat_session_id": ObjectId(chat_id)})
+        
+        return result.modified_count > 0 or result.deleted_count > 0
+
+    async def search_messages(
+        self,
+        user: User,
+        query: str,
+        chat_id: Optional[str] = None,
+        limit: int = 50,
+        skip: int = 0
+    ) -> Tuple[List[Message], int]:
+        """Search messages by content"""
+        
+        # Build search query
+        search_query = {
+            "user_id": user.id,
+            "$text": {"$search": query}
+        }
+        
+        if chat_id:
+            search_query["chat_session_id"] = ObjectId(chat_id)
+        
+        # Get total count
+        total = await self.messages_collection.count_documents(search_query)
+        
+        # Get messages
+        cursor = self.messages_collection.find(search_query).sort("timestamp", -1).skip(skip).limit(limit)
+        message_docs = await cursor.to_list(length=limit)
+        
+        messages = [Message(**doc) for doc in message_docs]
+        
+        return messages, total
+
+    async def get_chat_statistics(self, user: User) -> Dict[str, Any]:
+        """Get user's chat statistics"""
+        
+        # Get basic counts
+        total_chats = await self.chat_sessions_collection.count_documents({
+            "user_id": user.id,
+            "status": {"$ne": ChatStatus.DELETED}
+        })
+        
+        active_chats = await self.chat_sessions_collection.count_documents({
+            "user_id": user.id,
+            "status": ChatStatus.ACTIVE
+        })
+        
+        total_messages = await self.messages_collection.count_documents({
+            "user_id": user.id
+        })
+        
+        # Get recent activity
+        recent_activity = await self.messages_collection.count_documents({
+            "user_id": user.id,
+            "timestamp": {"$gte": datetime.utcnow() - timedelta(days=7)}
+        })
+        
+        # Get most used legal categories
+        pipeline = [
+            {"$match": {"user_id": user.id}},
+            {"$unwind": "$metadata.legal_categories"},
+            {"$group": {"_id": "$metadata.legal_categories", "count": {"$sum": 1}}},
+            {"$sort": {"count": -1}},
+            {"$limit": 5}
+        ]
+        
+        cursor = self.chat_sessions_collection.aggregate(pipeline)
+        legal_categories = await cursor.to_list(length=5)
+        
+        return {
+            "total_chats": total_chats,
+            "active_chats": active_chats,
+            "total_messages": total_messages,
+            "recent_activity": recent_activity,
+            "top_legal_categories": [cat["_id"] for cat in legal_categories],
+            "generated_at": datetime.utcnow().isoformat()
+        }
