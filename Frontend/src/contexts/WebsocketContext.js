@@ -1,10 +1,8 @@
-// src/contexts/WebSocketContext.js - WebSocket connection state management
+// src/contexts/WebSocketContext.js - Complete WebSocket connection state management
 import React, { createContext, useContext, useReducer, useEffect, useCallback } from 'react';
 import websocketService from '../services/websocketService.js';
 import errorService from '../services/errorService.js';
 import { useAuth } from './AuthContext.js';
-import { useChat } from './ChatContext.js';
-import { useMessage } from './MessageContext.js';
 import { 
   CONNECTION_STATES, 
   WS_MESSAGE_TYPES, 
@@ -160,6 +158,278 @@ const calculateAverageLatency = (history) => {
 // WebSocket reducer
 const websocketReducer = (state, action) => {
   switch (action.type) {
+    case WS_ACTIONS.CONNECTION_INIT:
+      return {
+        ...state,
+        connectionState: CONNECTION_STATES.CONNECTING,
+        lastError: null,
+      };
+
+    case WS_ACTIONS.CONNECTION_CONNECTING:
+      return {
+        ...state,
+        connectionState: CONNECTION_STATES.CONNECTING,
+        lastError: null,
+      };
+
+    case WS_ACTIONS.CONNECTION_CONNECTED:
+      const connectionTime = new Date();
+      return {
+        ...state,
+        isConnected: true,
+        connectionState: CONNECTION_STATES.CONNECTED,
+        connectionId: action.payload.connectionId,
+        lastConnected: connectionTime,
+        reconnectAttempts: 0,
+        lastError: null,
+        statistics: {
+          ...state.statistics,
+          totalConnections: state.statistics.totalConnections + 1,
+        },
+      };
+
+    case WS_ACTIONS.CONNECTION_DISCONNECTED:
+      const disconnectionTime = new Date();
+      const sessionDuration = state.lastConnected 
+        ? disconnectionTime.getTime() - state.lastConnected.getTime()
+        : 0;
+
+      return {
+        ...state,
+        isConnected: false,
+        connectionState: CONNECTION_STATES.DISCONNECTED,
+        connectionId: null,
+        lastDisconnected: disconnectionTime,
+        currentChatRoom: null,
+        activeUsers: {},
+        typingUsers: {},
+        statistics: {
+          ...state.statistics,
+          sessionDuration: state.statistics.sessionDuration + sessionDuration,
+        },
+      };
+
+    case WS_ACTIONS.CONNECTION_RECONNECTING:
+      return {
+        ...state,
+        connectionState: CONNECTION_STATES.RECONNECTING,
+        reconnectAttempts: action.payload.attempt,
+        statistics: {
+          ...state.statistics,
+          totalReconnections: state.statistics.totalReconnections + 1,
+        },
+      };
+
+    case WS_ACTIONS.CONNECTION_ERROR:
+      const connectionError = {
+        error: action.payload.error,
+        timestamp: new Date(),
+        attempt: state.reconnectAttempts,
+      };
+
+      return {
+        ...state,
+        connectionState: CONNECTION_STATES.ERROR,
+        lastError: action.payload.error,
+        connectionErrors: [...state.connectionErrors.slice(-9), connectionError], // Keep last 10 errors
+        statistics: {
+          ...state.statistics,
+          totalErrors: state.statistics.totalErrors + 1,
+        },
+      };
+
+    case WS_ACTIONS.CONNECTION_TIMEOUT:
+      return {
+        ...state,
+        connectionState: CONNECTION_STATES.ERROR,
+        lastError: 'Connection timeout',
+      };
+
+    case WS_ACTIONS.JOIN_ROOM:
+      return {
+        ...state,
+        currentChatRoom: action.payload.chatId,
+      };
+
+    case WS_ACTIONS.LEAVE_ROOM:
+      return {
+        ...state,
+        currentChatRoom: null,
+        activeUsers: {
+          ...state.activeUsers,
+          [action.payload.chatId]: [],
+        },
+        typingUsers: {
+          ...state.typingUsers,
+          [action.payload.chatId]: {},
+        },
+      };
+
+    case WS_ACTIONS.ROOM_USERS_UPDATED:
+      return {
+        ...state,
+        activeUsers: {
+          ...state.activeUsers,
+          [action.payload.chatId]: action.payload.users,
+        },
+      };
+
+    case WS_ACTIONS.USER_JOINED:
+      const { chatId: joinedChatId, userId: joinedUserId } = action.payload;
+      const currentUsers = state.activeUsers[joinedChatId] || [];
+      
+      return {
+        ...state,
+        activeUsers: {
+          ...state.activeUsers,
+          [joinedChatId]: [...currentUsers.filter(id => id !== joinedUserId), joinedUserId],
+        },
+        userPresence: {
+          ...state.userPresence,
+          [joinedUserId]: {
+            status: 'online',
+            lastSeen: new Date(),
+          },
+        },
+      };
+
+    case WS_ACTIONS.USER_LEFT:
+      const { chatId: leftChatId, userId: leftUserId } = action.payload;
+      const usersAfterLeaving = (state.activeUsers[leftChatId] || []).filter(id => id !== leftUserId);
+      
+      return {
+        ...state,
+        activeUsers: {
+          ...state.activeUsers,
+          [leftChatId]: usersAfterLeaving,
+        },
+        userPresence: {
+          ...state.userPresence,
+          [leftUserId]: {
+            status: 'offline',
+            lastSeen: new Date(),
+          },
+        },
+      };
+
+    case WS_ACTIONS.PRESENCE_UPDATED:
+      return {
+        ...state,
+        userPresence: {
+          ...state.userPresence,
+          [action.payload.userId]: {
+            status: action.payload.status,
+            lastSeen: action.payload.lastSeen,
+          },
+        },
+      };
+
+    case WS_ACTIONS.TYPING_START:
+      const { chatId: typingChatId, userId: typingUserId } = action.payload;
+      
+      return {
+        ...state,
+        typingUsers: {
+          ...state.typingUsers,
+          [typingChatId]: {
+            ...state.typingUsers[typingChatId],
+            [typingUserId]: new Date(),
+          },
+        },
+      };
+
+    case WS_ACTIONS.TYPING_STOP:
+      const { chatId: stopTypingChatId, userId: stopTypingUserId } = action.payload;
+      const updatedTypingUsers = { ...state.typingUsers };
+      
+      if (updatedTypingUsers[stopTypingChatId]) {
+        delete updatedTypingUsers[stopTypingChatId][stopTypingUserId];
+        
+        // Clean up empty chat entries
+        if (Object.keys(updatedTypingUsers[stopTypingChatId]).length === 0) {
+          delete updatedTypingUsers[stopTypingChatId];
+        }
+      }
+
+      return {
+        ...state,
+        typingUsers: updatedTypingUsers,
+      };
+
+    case WS_ACTIONS.MESSAGE_SENT:
+      return {
+        ...state,
+        messagesSent: state.messagesSent + 1,
+        statistics: {
+          ...state.statistics,
+          totalMessages: state.statistics.totalMessages + 1,
+        },
+      };
+
+    case WS_ACTIONS.MESSAGE_RECEIVED:
+      return {
+        ...state,
+        messagesReceived: state.messagesReceived + 1,
+      };
+
+    case WS_ACTIONS.MESSAGE_ACK_RECEIVED:
+      const { messageId } = action.payload;
+      const newPendingAcks = new Map(state.pendingAcknowledgments);
+      
+      if (newPendingAcks.has(messageId)) {
+        const sentTime = newPendingAcks.get(messageId);
+        const latency = calculateLatency(sentTime, Date.now());
+        const updatedHistory = updateLatencyHistory(state.latencyHistory, latency);
+        
+        newPendingAcks.delete(messageId);
+
+        return {
+          ...state,
+          pendingAcknowledgments: newPendingAcks,
+          latencyHistory: updatedHistory,
+          averageLatency: calculateAverageLatency(updatedHistory),
+        };
+      }
+
+      return state;
+
+    case WS_ACTIONS.ADD_TO_QUEUE:
+      return {
+        ...state,
+        messageQueue: [...state.messageQueue, action.payload.message],
+      };
+
+    case WS_ACTIONS.REMOVE_FROM_QUEUE:
+      return {
+        ...state,
+        messageQueue: state.messageQueue.filter(msg => msg.id !== action.payload.messageId),
+      };
+
+    case WS_ACTIONS.CLEAR_QUEUE:
+      return {
+        ...state,
+        messageQueue: [],
+      };
+
+    case WS_ACTIONS.UPDATE_LATENCY:
+      const newLatency = action.payload.latency;
+      const newHistory = updateLatencyHistory(state.latencyHistory, newLatency);
+      
+      return {
+        ...state,
+        latencyHistory: newHistory,
+        averageLatency: calculateAverageLatency(newHistory),
+      };
+
+    case WS_ACTIONS.UPDATE_STATISTICS:
+      return {
+        ...state,
+        statistics: {
+          ...state.statistics,
+          ...action.payload.updates,
+        },
+      };
+
     case WS_ACTIONS.UPDATE_NOTIFICATION_SETTINGS:
       return {
         ...state,
@@ -223,13 +493,6 @@ const WebSocketContext = createContext();
 export const WebSocketProvider = ({ children }) => {
   const [state, dispatch] = useReducer(websocketReducer, initialState);
   const { isAuthenticated, user } = useAuth();
-  const { currentChatId } = useChat();
-  const { 
-    sendMessage: addMessageToContext,
-    startStreaming,
-    updateMessageInteraction,
-    setTypingIndicator,
-  } = useMessage();
 
   // Connect when user is authenticated
   useEffect(() => {
@@ -239,13 +502,6 @@ export const WebSocketProvider = ({ children }) => {
       disconnectWebSocket();
     }
   }, [isAuthenticated]);
-
-  // Join chat room when current chat changes
-  useEffect(() => {
-    if (state.isConnected && currentChatId && currentChatId !== state.currentChatRoom) {
-      joinChatRoom(currentChatId);
-    }
-  }, [state.isConnected, currentChatId, state.currentChatRoom]);
 
   // Set up WebSocket event listeners
   useEffect(() => {
@@ -537,25 +793,25 @@ export const WebSocketProvider = ({ children }) => {
   }, [state.notifications, state.currentChatRoom]);
 
   const handleStreamChunk = useCallback((data) => {
-    // Forward to message context
-    startStreaming(data.message_id, data.metadata?.stream_id);
-  }, [startStreaming]);
+    dispatch({
+      type: WS_ACTIONS.STREAM_CHUNK,
+      payload: { data },
+    });
+  }, []);
 
   const handleStreamComplete = useCallback((data) => {
-    // This will be handled by the message context
     dispatch({
-      type: WS_ACTIONS.MESSAGE_RECEIVED,
+      type: WS_ACTIONS.STREAM_COMPLETE,
       payload: { data },
     });
   }, []);
 
   const handleNewMessage = useCallback((data) => {
-    // Add message to context
-    addMessageToContext(data.chat_session_id, data.content, {
-      role: data.role || MESSAGE_ROLES.ASSISTANT,
-      messageId: data.message_id,
+    dispatch({
+      type: WS_ACTIONS.MESSAGE_RECEIVED,
+      payload: { data },
     });
-  }, [addMessageToContext]);
+  }, []);
 
   const handleTypingIndicator = useCallback((data) => {
     const { user_id: userId, is_typing: isTyping, chat_id: chatId } = data.metadata || {};
@@ -573,10 +829,7 @@ export const WebSocketProvider = ({ children }) => {
         payload: { chatId, userId },
       });
     }
-
-    // Forward to message context
-    setTypingIndicator(chatId, userId, isTyping);
-  }, [setTypingIndicator]);
+  }, []);
 
   const handleWebSocketError = useCallback((data) => {
     const error = data.error || 'Unknown WebSocket error';
@@ -911,276 +1164,319 @@ export const usePresence = () => {
   };
 };
 
-export default WebSocketContext;S_ACTIONS.CONNECTION_INIT:
-      return {
-        ...state,
-        connectionState: CONNECTION_STATES.CONNECTING,
-        lastError: null,
-      };
+// Hook for WebSocket performance monitoring
+export const useWebSocketPerformance = () => {
+  const { 
+    averageLatency, 
+    latencyHistory, 
+    connectionQuality,
+    getConnectionStatistics,
+    messagesSent,
+    messagesReceived,
+  } = useWebSocket();
 
-    case WS_ACTIONS.CONNECTION_CONNECTING:
-      return {
-        ...state,
-        connectionState: CONNECTION_STATES.CONNECTING,
-        lastError: null,
-      };
+  const [performanceMetrics, setPerformanceMetrics] = React.useState({
+    latency: {
+      current: 0,
+      average: 0,
+      min: 0,
+      max: 0,
+    },
+    throughput: {
+      sentPerSecond: 0,
+      receivedPerSecond: 0,
+    },
+    reliability: {
+      uptime: 0,
+      errorRate: 0,
+      reconnectCount: 0,
+    },
+  });
 
-    case WS_ACTIONS.CONNECTION_CONNECTED:
-      const connectionTime = new Date();
-      return {
-        ...state,
-        isConnected: true,
-        connectionState: CONNECTION_STATES.CONNECTED,
-        connectionId: action.payload.connectionId,
-        lastConnected: connectionTime,
-        reconnectAttempts: 0,
-        lastError: null,
-        statistics: {
-          ...state.statistics,
-          totalConnections: state.statistics.totalConnections + 1,
-        },
-      };
-
-    case WS_ACTIONS.CONNECTION_DISCONNECTED:
-      const disconnectionTime = new Date();
-      const sessionDuration = state.lastConnected 
-        ? disconnectionTime.getTime() - state.lastConnected.getTime()
-        : 0;
-
-      return {
-        ...state,
-        isConnected: false,
-        connectionState: CONNECTION_STATES.DISCONNECTED,
-        connectionId: null,
-        lastDisconnected: disconnectionTime,
-        currentChatRoom: null,
-        activeUsers: {},
-        typingUsers: {},
-        statistics: {
-          ...state.statistics,
-          sessionDuration: state.statistics.sessionDuration + sessionDuration,
-        },
-      };
-
-    case WS_ACTIONS.CONNECTION_RECONNECTING:
-      return {
-        ...state,
-        connectionState: CONNECTION_STATES.RECONNECTING,
-        reconnectAttempts: action.payload.attempt,
-        statistics: {
-          ...state.statistics,
-          totalReconnections: state.statistics.totalReconnections + 1,
-        },
-      };
-
-    case WS_ACTIONS.CONNECTION_ERROR:
-      const connectionError = {
-        error: action.payload.error,
-        timestamp: new Date(),
-        attempt: state.reconnectAttempts,
-      };
-
-      return {
-        ...state,
-        connectionState: CONNECTION_STATES.ERROR,
-        lastError: action.payload.error,
-        connectionErrors: [...state.connectionErrors.slice(-9), connectionError], // Keep last 10 errors
-        statistics: {
-          ...state.statistics,
-          totalErrors: state.statistics.totalErrors + 1,
-        },
-      };
-
-    case WS_ACTIONS.CONNECTION_TIMEOUT:
-      return {
-        ...state,
-        connectionState: CONNECTION_STATES.ERROR,
-        lastError: 'Connection timeout',
-      };
-
-    case WS_ACTIONS.JOIN_ROOM:
-      return {
-        ...state,
-        currentChatRoom: action.payload.chatId,
-      };
-
-    case WS_ACTIONS.LEAVE_ROOM:
-      return {
-        ...state,
-        currentChatRoom: null,
-        activeUsers: {
-          ...state.activeUsers,
-          [action.payload.chatId]: [],
-        },
-        typingUsers: {
-          ...state.typingUsers,
-          [action.payload.chatId]: {},
-        },
-      };
-
-    case WS_ACTIONS.ROOM_USERS_UPDATED:
-      return {
-        ...state,
-        activeUsers: {
-          ...state.activeUsers,
-          [action.payload.chatId]: action.payload.users,
-        },
-      };
-
-    case WS_ACTIONS.USER_JOINED:
-      const { chatId: joinedChatId, userId: joinedUserId } = action.payload;
-      const currentUsers = state.activeUsers[joinedChatId] || [];
+  React.useEffect(() => {
+    const calculateMetrics = () => {
+      const stats = getConnectionStatistics();
+      const currentLatency = latencyHistory[latencyHistory.length - 1] || 0;
+      const minLatency = latencyHistory.length > 0 ? Math.min(...latencyHistory) : 0;
+      const maxLatency = latencyHistory.length > 0 ? Math.max(...latencyHistory) : 0;
       
-      return {
-        ...state,
-        activeUsers: {
-          ...state.activeUsers,
-          [joinedChatId]: [...currentUsers.filter(id => id !== joinedUserId), joinedUserId],
-        },
-        userPresence: {
-          ...state.userPresence,
-          [joinedUserId]: {
-            status: 'online',
-            lastSeen: new Date(),
-          },
-        },
-      };
-
-    case WS_ACTIONS.USER_LEFT:
-      const { chatId: leftChatId, userId: leftUserId } = action.payload;
-      const usersAfterLeaving = (state.activeUsers[leftChatId] || []).filter(id => id !== leftUserId);
+      // Calculate throughput (messages per second over last minute)
+      const sessionDuration = stats.currentUptime / 1000; // in seconds
+      const sentPerSecond = sessionDuration > 0 ? messagesSent / sessionDuration : 0;
+      const receivedPerSecond = sessionDuration > 0 ? messagesReceived / sessionDuration : 0;
       
-      return {
-        ...state,
-        activeUsers: {
-          ...state.activeUsers,
-          [leftChatId]: usersAfterLeaving,
+      // Calculate error rate
+      const totalOperations = stats.totalMessages + stats.totalErrors;
+      const errorRate = totalOperations > 0 ? (stats.totalErrors / totalOperations) * 100 : 0;
+
+      setPerformanceMetrics({
+        latency: {
+          current: currentLatency,
+          average: averageLatency,
+          min: minLatency,
+          max: maxLatency,
         },
-        userPresence: {
-          ...state.userPresence,
-          [leftUserId]: {
-            status: 'offline',
-            lastSeen: new Date(),
-          },
+        throughput: {
+          sentPerSecond: Math.round(sentPerSecond * 100) / 100,
+          receivedPerSecond: Math.round(receivedPerSecond * 100) / 100,
         },
-      };
-
-    case WS_ACTIONS.PRESENCE_UPDATED:
-      return {
-        ...state,
-        userPresence: {
-          ...state.userPresence,
-          [action.payload.userId]: {
-            status: action.payload.status,
-            lastSeen: action.payload.lastSeen,
-          },
+        reliability: {
+          uptime: Math.round((stats.currentUptime / 1000) * 100) / 100, // seconds
+          errorRate: Math.round(errorRate * 100) / 100,
+          reconnectCount: stats.totalReconnections,
         },
-      };
+      });
+    };
 
-    case WS_ACTIONS.TYPING_START:
-      const { chatId: typingChatId, userId: typingUserId } = action.payload;
-      
-      return {
-        ...state,
-        typingUsers: {
-          ...state.typingUsers,
-          [typingChatId]: {
-            ...state.typingUsers[typingChatId],
-            [typingUserId]: new Date(),
-          },
-        },
-      };
+    const interval = setInterval(calculateMetrics, 5000); // Update every 5 seconds
+    calculateMetrics(); // Initial calculation
 
-    case WS_ACTIONS.TYPING_STOP:
-      const { chatId: stopTypingChatId, userId: stopTypingUserId } = action.payload;
-      const updatedTypingUsers = { ...state.typingUsers };
-      
-      if (updatedTypingUsers[stopTypingChatId]) {
-        delete updatedTypingUsers[stopTypingChatId][stopTypingUserId];
-        
-        // Clean up empty chat entries
-        if (Object.keys(updatedTypingUsers[stopTypingChatId]).length === 0) {
-          delete updatedTypingUsers[stopTypingChatId];
-        }
-      }
+    return () => clearInterval(interval);
+  }, [latencyHistory, averageLatency, getConnectionStatistics, messagesSent, messagesReceived]);
 
-      return {
-        ...state,
-        typingUsers: updatedTypingUsers,
-      };
+  return {
+    metrics: performanceMetrics,
+    connectionQuality,
+    isPerformant: connectionQuality === 'excellent' || connectionQuality === 'good',
+    hasLatencyIssues: averageLatency > 500,
+    hasReliabilityIssues: performanceMetrics.reliability.errorRate > 5,
+  };
+};
 
-    case WS_ACTIONS.MESSAGE_SENT:
-      return {
-        ...state,
-        messagesSent: state.messagesSent + 1,
-        statistics: {
-          ...state.statistics,
-          totalMessages: state.statistics.totalMessages + 1,
-        },
-      };
+// Hook for real-time notifications
+export const useWebSocketNotifications = () => {
+  const {
+    notifications,
+    updateNotificationSettings,
+    requestNotificationPermission,
+    notificationPermission,
+    canShowNotifications,
+  } = useWebSocket();
 
-    case WS_ACTIONS.MESSAGE_RECEIVED:
-      return {
-        ...state,
-        messagesReceived: state.messagesReceived + 1,
-      };
+  const [notificationQueue, setNotificationQueue] = React.useState([]);
 
-    case WS_ACTIONS.MESSAGE_ACK_RECEIVED:
-      const { messageId } = action.payload;
-      const newPendingAcks = new Map(state.pendingAcknowledgments);
-      
-      if (newPendingAcks.has(messageId)) {
-        const sentTime = newPendingAcks.get(messageId);
-        const latency = calculateLatency(sentTime, Date.now());
-        const updatedHistory = updateLatencyHistory(state.latencyHistory, latency);
-        
-        newPendingAcks.delete(messageId);
+  const showNotification = React.useCallback((title, body, options = {}) => {
+    if (!canShowNotifications) {
+      // Queue notification for when permission is granted
+      setNotificationQueue(prev => [...prev, { title, body, options }]);
+      return null;
+    }
 
-        return {
-          ...state,
-          pendingAcknowledgments: newPendingAcks,
-          latencyHistory: updatedHistory,
-          averageLatency: calculateAverageLatency(updatedHistory),
-        };
-      }
+    const notification = new Notification(title, {
+      body,
+      icon: '/favicon.ico',
+      badge: '/badge-icon.png',
+      silent: !notifications.sound,
+      requireInteraction: options.persistent || false,
+      ...options,
+    });
 
-      return state;
+    // Auto-close after specified duration
+    if (options.duration && options.duration > 0) {
+      setTimeout(() => notification.close(), options.duration);
+    }
 
-    case WS_ACTIONS.ADD_TO_QUEUE:
-      return {
-        ...state,
-        messageQueue: [...state.messageQueue, action.payload.message],
-      };
+    return notification;
+  }, [canShowNotifications, notifications.sound]);
 
-    case WS_ACTIONS.REMOVE_FROM_QUEUE:
-      return {
-        ...state,
-        messageQueue: state.messageQueue.filter(msg => msg.id !== action.payload.messageId),
-      };
+  const processNotificationQueue = React.useCallback(() => {
+    if (canShowNotifications && notificationQueue.length > 0) {
+      notificationQueue.forEach(({ title, body, options }) => {
+        showNotification(title, body, options);
+      });
+      setNotificationQueue([]);
+    }
+  }, [canShowNotifications, notificationQueue, showNotification]);
 
-    case WS_ACTIONS.CLEAR_QUEUE:
-      return {
-        ...state,
-        messageQueue: [],
-      };
+  // Process queued notifications when permission is granted
+  React.useEffect(() => {
+    processNotificationQueue();
+  }, [processNotificationQueue]);
 
-    case WS_ACTIONS.UPDATE_LATENCY:
-      const newLatency = action.payload.latency;
-      const newHistory = updateLatencyHistory(state.latencyHistory, newLatency);
-      
-      return {
-        ...state,
-        latencyHistory: newHistory,
-        averageLatency: calculateAverageLatency(newHistory),
-      };
+  const enableNotifications = React.useCallback(async () => {
+    const permission = await requestNotificationPermission();
+    if (permission === 'granted') {
+      updateNotificationSettings({ enabled: true });
+      processNotificationQueue();
+    }
+    return permission;
+  }, [requestNotificationPermission, updateNotificationSettings, processNotificationQueue]);
 
-    case WS_ACTIONS.UPDATE_STATISTICS:
-      return {
-        ...state,
-        statistics: {
-          ...state.statistics,
-          ...action.payload.updates,
-        },
-      };
+  const disableNotifications = React.useCallback(() => {
+    updateNotificationSettings({ enabled: false });
+  }, [updateNotificationSettings]);
 
-    case W
+  const toggleSound = React.useCallback(() => {
+    updateNotificationSettings({ sound: !notifications.sound });
+  }, [notifications.sound, updateNotificationSettings]);
+
+  return {
+    notifications,
+    notificationPermission,
+    canShowNotifications,
+    queuedNotifications: notificationQueue.length,
+    showNotification,
+    enableNotifications,
+    disableNotifications,
+    toggleSound,
+    updateNotificationSettings,
+  };
+};
+
+// Hook for connection diagnostics
+export const useWebSocketDiagnostics = () => {
+  const {
+    connectionState,
+    connectionErrors,
+    lastError,
+    getConnectionHealth,
+    getConnectionStatistics,
+    reconnectAttempts,
+    maxReconnectAttempts,
+  } = useWebSocket();
+
+  const [diagnostics, setDiagnostics] = React.useState({
+    status: 'unknown',
+    issues: [],
+    recommendations: [],
+    lastCheck: null,
+  });
+
+  const runDiagnostics = React.useCallback(() => {
+    const health = getConnectionHealth();
+    const stats = getConnectionStatistics();
+    const issues = [];
+    const recommendations = [];
+
+    // Check connection status
+    if (!health.isHealthy) {
+      issues.push({
+        type: 'connection',
+        severity: 'high',
+        message: 'WebSocket connection is not healthy',
+        details: lastError,
+      });
+      recommendations.push('Try refreshing the page or checking your internet connection');
+    }
+
+    // Check latency
+    if (health.averageLatency > 1000) {
+      issues.push({
+        type: 'performance',
+        severity: 'medium',
+        message: 'High latency detected',
+        details: `Average latency: ${health.averageLatency}ms`,
+      });
+      recommendations.push('Check your internet connection stability');
+    }
+
+    // Check reconnection attempts
+    if (reconnectAttempts > maxReconnectAttempts / 2) {
+      issues.push({
+        type: 'stability',
+        severity: 'medium',
+        message: 'Frequent reconnection attempts',
+        details: `${reconnectAttempts}/${maxReconnectAttempts} attempts`,
+      });
+      recommendations.push('Your connection may be unstable');
+    }
+
+    // Check error rate
+    if (connectionErrors.length > 5) {
+      issues.push({
+        type: 'errors',
+        severity: 'high',
+        message: 'Multiple connection errors detected',
+        details: `${connectionErrors.length} recent errors`,
+      });
+      recommendations.push('There may be server-side issues');
+    }
+
+    // Check queued messages
+    if (health.queuedMessages > 0) {
+      issues.push({
+        type: 'queue',
+        severity: 'low',
+        message: 'Messages waiting in queue',
+        details: `${health.queuedMessages} queued messages`,
+      });
+      recommendations.push('Messages will be sent when connection is restored');
+    }
+
+    // Determine overall status
+    let status = 'good';
+    const highSeverityIssues = issues.filter(issue => issue.severity === 'high');
+    const mediumSeverityIssues = issues.filter(issue => issue.severity === 'medium');
+
+    if (highSeverityIssues.length > 0) {
+      status = 'critical';
+    } else if (mediumSeverityIssues.length > 0) {
+      status = 'warning';
+    } else if (issues.length > 0) {
+      status = 'minor';
+    }
+
+    setDiagnostics({
+      status,
+      issues,
+      recommendations,
+      lastCheck: new Date(),
+    });
+
+    return {
+      status,
+      issues,
+      recommendations,
+      health,
+      stats,
+    };
+  }, [
+    getConnectionHealth,
+    getConnectionStatistics,
+    lastError,
+    reconnectAttempts,
+    maxReconnectAttempts,
+    connectionErrors,
+  ]);
+
+  // Auto-run diagnostics periodically
+  React.useEffect(() => {
+    const interval = setInterval(runDiagnostics, 30000); // Every 30 seconds
+    runDiagnostics(); // Initial run
+
+    return () => clearInterval(interval);
+  }, [runDiagnostics]);
+
+  const exportDiagnostics = React.useCallback(() => {
+    const health = getConnectionHealth();
+    const stats = getConnectionStatistics();
+    
+    return {
+      timestamp: new Date().toISOString(),
+      userAgent: navigator.userAgent,
+      url: window.location.href,
+      connectionState,
+      health,
+      statistics: stats,
+      diagnostics,
+      connectionErrors: connectionErrors.slice(-10), // Last 10 errors
+    };
+  }, [getConnectionHealth, getConnectionStatistics, connectionState, diagnostics, connectionErrors]);
+
+  return {
+    diagnostics,
+    runDiagnostics,
+    exportDiagnostics,
+    hasIssues: diagnostics.issues.length > 0,
+    hasCriticalIssues: diagnostics.issues.some(issue => issue.severity === 'high'),
+    statusColor: {
+      good: 'green',
+      minor: 'yellow',
+      warning: 'orange',
+      critical: 'red',
+      unknown: 'gray',
+    }[diagnostics.status],
+  };
+};
+
+export default WebSocketContext;

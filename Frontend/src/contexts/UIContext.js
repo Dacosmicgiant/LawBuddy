@@ -1,4 +1,169 @@
-// Error boundary
+// src/contexts/UIContext.js - UI state management for loading, notifications, modals
+import React, { createContext, useContext, useReducer, useEffect, useCallback } from 'react';
+import { useAuth } from './AuthContext.js';
+import { useWebSocket } from './WebSocketContext.js';
+import errorService from '../services/errorService.js';
+
+// Initial state
+const initialState = {
+  // Loading states
+  globalLoading: false,
+  loadingStates: {}, // { operationId: { loading: boolean, message: string } }
+  
+  // Notifications
+  notifications: [], // { id, type, title, message, duration, actions, persistent }
+  maxNotifications: 5,
+  
+  // Modals and dialogs
+  modals: {}, // { modalId: { isOpen: boolean, data: any, options: any } }
+  
+  // Toasts (temporary notifications)
+  toasts: [], // { id, type, message, duration, position }
+  toastPosition: 'top-right', // 'top-right', 'top-left', 'bottom-right', 'bottom-left'
+  
+  // Global UI states
+  sidebar: {
+    isOpen: true,
+    isPinned: false,
+    width: 320,
+  },
+  
+  theme: {
+    mode: 'light', // 'light', 'dark', 'system'
+    primaryColor: 'slate',
+    fontSize: 'medium', // 'small', 'medium', 'large'
+    density: 'comfortable', // 'compact', 'comfortable', 'spacious'
+  },
+  
+  // Layout states
+  layout: {
+    headerHeight: 64,
+    footerHeight: 0,
+    contentPadding: 24,
+    chatPanelWidth: 380,
+    messageListHeight: 'auto',
+  },
+  
+  // Focus and navigation
+  focus: {
+    currentElement: null,
+    trapFocus: false,
+    focusHistory: [],
+  },
+  
+  // Accessibility
+  accessibility: {
+    highContrast: false,
+    reduceMotion: false,
+    screenReader: false,
+    keyboardNavigation: false,
+  },
+  
+  // Performance
+  performance: {
+    enableAnimations: true,
+    lazyLoading: true,
+    virtualScrolling: false,
+    imageOptimization: true,
+  },
+  
+  // User preferences
+  preferences: {
+    autoSaveInterval: 30000, // 30 seconds
+    confirmBeforeDelete: true,
+    showTutorials: true,
+    compactView: false,
+    soundEnabled: true,
+  },
+  
+  // Error boundary
+  errorBoundary: {
+    hasError: false,
+    error: null,
+    errorInfo: null,
+    fallbackComponent: null,
+  },
+  
+  // Feature flags
+  features: {
+    betaFeatures: false,
+    experimentalUI: false,
+    advancedEditor: false,
+    keyboardShortcuts: true,
+  },
+  
+  // Connection indicators
+  connectionStatus: {
+    showIndicator: true,
+    position: 'top-right',
+    style: 'minimal', // 'minimal', 'detailed', 'hidden'
+  },
+};
+
+// Action types
+const UI_ACTIONS = {
+  // Loading states
+  SET_GLOBAL_LOADING: 'SET_GLOBAL_LOADING',
+  SET_LOADING_STATE: 'SET_LOADING_STATE',
+  CLEAR_LOADING_STATE: 'CLEAR_LOADING_STATE',
+  CLEAR_ALL_LOADING: 'CLEAR_ALL_LOADING',
+  
+  // Notifications
+  ADD_NOTIFICATION: 'ADD_NOTIFICATION',
+  REMOVE_NOTIFICATION: 'REMOVE_NOTIFICATION',
+  CLEAR_NOTIFICATIONS: 'CLEAR_NOTIFICATIONS',
+  UPDATE_NOTIFICATION: 'UPDATE_NOTIFICATION',
+  
+  // Toasts
+  ADD_TOAST: 'ADD_TOAST',
+  REMOVE_TOAST: 'REMOVE_TOAST',
+  CLEAR_TOASTS: 'CLEAR_TOASTS',
+  SET_TOAST_POSITION: 'SET_TOAST_POSITION',
+  
+  // Modals
+  OPEN_MODAL: 'OPEN_MODAL',
+  CLOSE_MODAL: 'CLOSE_MODAL',
+  UPDATE_MODAL: 'UPDATE_MODAL',
+  CLOSE_ALL_MODALS: 'CLOSE_ALL_MODALS',
+  
+  // Sidebar
+  TOGGLE_SIDEBAR: 'TOGGLE_SIDEBAR',
+  SET_SIDEBAR_STATE: 'SET_SIDEBAR_STATE',
+  TOGGLE_SIDEBAR_PIN: 'TOGGLE_SIDEBAR_PIN',
+  SET_SIDEBAR_WIDTH: 'SET_SIDEBAR_WIDTH',
+  
+  // Theme
+  SET_THEME_MODE: 'SET_THEME_MODE',
+  SET_THEME_COLOR: 'SET_THEME_COLOR',
+  SET_FONT_SIZE: 'SET_FONT_SIZE',
+  SET_DENSITY: 'SET_DENSITY',
+  TOGGLE_HIGH_CONTRAST: 'TOGGLE_HIGH_CONTRAST',
+  
+  // Layout
+  UPDATE_LAYOUT: 'UPDATE_LAYOUT',
+  RESET_LAYOUT: 'RESET_LAYOUT',
+  
+  // Focus management
+  SET_FOCUS: 'SET_FOCUS',
+  CLEAR_FOCUS: 'CLEAR_FOCUS',
+  TOGGLE_FOCUS_TRAP: 'TOGGLE_FOCUS_TRAP',
+  ADD_TO_FOCUS_HISTORY: 'ADD_TO_FOCUS_HISTORY',
+  
+  // Accessibility
+  UPDATE_ACCESSIBILITY: 'UPDATE_ACCESSIBILITY',
+  TOGGLE_REDUCE_MOTION: 'TOGGLE_REDUCE_MOTION',
+  ENABLE_SCREEN_READER: 'ENABLE_SCREEN_READER',
+  ENABLE_KEYBOARD_NAV: 'ENABLE_KEYBOARD_NAV',
+  
+  // Performance
+  UPDATE_PERFORMANCE: 'UPDATE_PERFORMANCE',
+  TOGGLE_ANIMATIONS: 'TOGGLE_ANIMATIONS',
+  
+  // Preferences
+  UPDATE_PREFERENCES: 'UPDATE_PREFERENCES',
+  RESET_PREFERENCES: 'RESET_PREFERENCES',
+  
+  // Error boundary
   SET_ERROR_BOUNDARY: 'SET_ERROR_BOUNDARY',
   CLEAR_ERROR_BOUNDARY: 'CLEAR_ERROR_BOUNDARY',
   
@@ -336,6 +501,24 @@ const uiReducer = (state, action) => {
         performance: {
           ...state.performance,
           enableAnimations: state.accessibility.reduceMotion, // Enable when reduce motion is off
+        },
+      };
+
+    case UI_ACTIONS.ENABLE_SCREEN_READER:
+      return {
+        ...state,
+        accessibility: {
+          ...state.accessibility,
+          screenReader: action.payload.enabled,
+        },
+      };
+
+    case UI_ACTIONS.ENABLE_KEYBOARD_NAV:
+      return {
+        ...state,
+        accessibility: {
+          ...state.accessibility,
+          keyboardNavigation: action.payload.enabled,
         },
       };
 
@@ -1417,6 +1600,222 @@ export const usePerformance = () => {
   };
 };
 
+// Hook for scroll position tracking
+export const useScrollPosition = () => {
+  const [scrollPosition, setScrollPosition] = React.useState({
+    x: 0,
+    y: 0,
+  });
+
+  React.useEffect(() => {
+    const updatePosition = () => {
+      setScrollPosition({
+        x: window.pageXOffset,
+        y: window.pageYOffset,
+      });
+    };
+
+    window.addEventListener('scroll', updatePosition);
+    updatePosition();
+
+    return () => window.removeEventListener('scroll', updatePosition);
+  }, []);
+
+  return scrollPosition;
+};
+
+// Hook for intersection observer
+export const useIntersectionObserver = (targetRef, options = {}) => {
+  const [isIntersecting, setIsIntersecting] = React.useState(false);
+
+  React.useEffect(() => {
+    const target = targetRef.current;
+    if (!target) return;
+
+    const observer = new IntersectionObserver(
+      ([entry]) => {
+        setIsIntersecting(entry.isIntersecting);
+      },
+      {
+        threshold: 0.1,
+        ...options,
+      }
+    );
+
+    observer.observe(target);
+
+    return () => {
+      observer.unobserve(target);
+    };
+  }, [targetRef, options]);
+
+  return isIntersecting;
+};
+
+// Hook for media queries
+export const useMediaQuery = (query) => {
+  const [matches, setMatches] = React.useState(() => {
+    return window.matchMedia(query).matches;
+  });
+
+  React.useEffect(() => {
+    const mediaQuery = window.matchMedia(query);
+    
+    const handleChange = (event) => {
+      setMatches(event.matches);
+    };
+
+    mediaQuery.addEventListener('change', handleChange);
+    setMatches(mediaQuery.matches);
+
+    return () => {
+      mediaQuery.removeEventListener('change', handleChange);
+    };
+  }, [query]);
+
+  return matches;
+};
+
+// Hook for click outside
+export const useClickOutside = (ref, callback) => {
+  React.useEffect(() => {
+    const handleClick = (event) => {
+      if (ref.current && !ref.current.contains(event.target)) {
+        callback();
+      }
+    };
+
+    document.addEventListener('mousedown', handleClick);
+    document.addEventListener('touchstart', handleClick);
+
+    return () => {
+      document.removeEventListener('mousedown', handleClick);
+      document.removeEventListener('touchstart', handleClick);
+    };
+  }, [ref, callback]);
+};
+
+// Hook for async operation state
+export const useAsyncOperation = () => {
+  const [state, setState] = React.useState({
+    isLoading: false,
+    error: null,
+    data: null,
+  });
+
+  const execute = React.useCallback(async (asyncOperation) => {
+    setState(prev => ({ ...prev, isLoading: true, error: null }));
+
+    try {
+      const result = await asyncOperation();
+      setState({ isLoading: false, error: null, data: result });
+      return result;
+    } catch (error) {
+      setState({ isLoading: false, error, data: null });
+      throw error;
+    }
+  }, []);
+
+  const reset = React.useCallback(() => {
+    setState({ isLoading: false, error: null, data: null });
+  }, []);
+
+  return {
+    ...state,
+    execute,
+    reset,
+  };
+};
+
+// Hook for debounced value
+export const useDebounce = (value, delay) => {
+  const [debouncedValue, setDebouncedValue] = React.useState(value);
+
+  React.useEffect(() => {
+    const handler = setTimeout(() => {
+      setDebouncedValue(value);
+    }, delay);
+
+    return () => {
+      clearTimeout(handler);
+    };
+  }, [value, delay]);
+
+  return debouncedValue;
+};
+
+// Hook for previous value
+export const usePrevious = (value) => {
+  const ref = React.useRef();
+  
+  React.useEffect(() => {
+    ref.current = value;
+  });
+  
+  return ref.current;
+};
+
+// Hook for event listener
+export const useEventListener = (eventName, handler, element = window) => {
+  const savedHandler = React.useRef();
+
+  React.useEffect(() => {
+    savedHandler.current = handler;
+  }, [handler]);
+
+  React.useEffect(() => {
+    const isSupported = element && element.addEventListener;
+    if (!isSupported) return;
+
+    const eventListener = (event) => savedHandler.current(event);
+    element.addEventListener(eventName, eventListener);
+
+    return () => {
+      element.removeEventListener(eventName, eventListener);
+    };
+  }, [eventName, element]);
+};
+
+// Hook for interval
+export const useInterval = (callback, delay) => {
+  const savedCallback = React.useRef();
+
+  React.useEffect(() => {
+    savedCallback.current = callback;
+  }, [callback]);
+
+  React.useEffect(() => {
+    function tick() {
+      savedCallback.current();
+    }
+    
+    if (delay !== null) {
+      const id = setInterval(tick, delay);
+      return () => clearInterval(id);
+    }
+  }, [delay]);
+};
+
+// Hook for timeout
+export const useTimeout = (callback, delay) => {
+  const savedCallback = React.useRef();
+
+  React.useEffect(() => {
+    savedCallback.current = callback;
+  }, [callback]);
+
+  React.useEffect(() => {
+    function tick() {
+      savedCallback.current();
+    }
+    
+    if (delay !== null) {
+      const id = setTimeout(tick, delay);
+      return () => clearTimeout(id);
+    }
+  }, [delay]);
+};
+
 // Development helpers
 export const UIDevTools = () => {
   const ui = useUI();
@@ -1433,171 +1832,4 @@ export const UIDevTools = () => {
   return null;
 };
 
-export default UIContext;// src/contexts/UIContext.js - UI state management for loading, notifications, modals
-import React, { createContext, useContext, useReducer, useEffect, useCallback } from 'react';
-import { useAuth } from './AuthContext.js';
-import { useWebSocket } from './WebSocketContext.js';
-import errorService from '../services/errorService.js';
-
-// Initial state
-const initialState = {
-  // Loading states
-  globalLoading: false,
-  loadingStates: {}, // { operationId: { loading: boolean, message: string } }
-  
-  // Notifications
-  notifications: [], // { id, type, title, message, duration, actions, persistent }
-  maxNotifications: 5,
-  
-  // Modals and dialogs
-  modals: {}, // { modalId: { isOpen: boolean, data: any, options: any } }
-  
-  // Toasts (temporary notifications)
-  toasts: [], // { id, type, message, duration, position }
-  toastPosition: 'top-right', // 'top-right', 'top-left', 'bottom-right', 'bottom-left'
-  
-  // Global UI states
-  sidebar: {
-    isOpen: true,
-    isPinned: false,
-    width: 320,
-  },
-  
-  theme: {
-    mode: 'light', // 'light', 'dark', 'system'
-    primaryColor: 'slate',
-    fontSize: 'medium', // 'small', 'medium', 'large'
-    density: 'comfortable', // 'compact', 'comfortable', 'spacious'
-  },
-  
-  // Layout states
-  layout: {
-    headerHeight: 64,
-    footerHeight: 0,
-    contentPadding: 24,
-    chatPanelWidth: 380,
-    messageListHeight: 'auto',
-  },
-  
-  // Focus and navigation
-  focus: {
-    currentElement: null,
-    trapFocus: false,
-    focusHistory: [],
-  },
-  
-  // Accessibility
-  accessibility: {
-    highContrast: false,
-    reduceMotion: false,
-    screenReader: false,
-    keyboardNavigation: false,
-  },
-  
-  // Performance
-  performance: {
-    enableAnimations: true,
-    lazyLoading: true,
-    virtualScrolling: false,
-    imageOptimization: true,
-  },
-  
-  // User preferences
-  preferences: {
-    autoSaveInterval: 30000, // 30 seconds
-    confirmBeforeDelete: true,
-    showTutorials: true,
-    compactView: false,
-    soundEnabled: true,
-  },
-  
-  // Error boundary
-  errorBoundary: {
-    hasError: false,
-    error: null,
-    errorInfo: null,
-    fallbackComponent: null,
-  },
-  
-  // Feature flags
-  features: {
-    betaFeatures: false,
-    experimentalUI: false,
-    advancedEditor: false,
-    keyboardShortcuts: true,
-  },
-  
-  // Connection indicators
-  connectionStatus: {
-    showIndicator: true,
-    position: 'top-right',
-    style: 'minimal', // 'minimal', 'detailed', 'hidden'
-  },
-};
-
-// Action types
-const UI_ACTIONS = {
-  // Loading states
-  SET_GLOBAL_LOADING: 'SET_GLOBAL_LOADING',
-  SET_LOADING_STATE: 'SET_LOADING_STATE',
-  CLEAR_LOADING_STATE: 'CLEAR_LOADING_STATE',
-  CLEAR_ALL_LOADING: 'CLEAR_ALL_LOADING',
-  
-  // Notifications
-  ADD_NOTIFICATION: 'ADD_NOTIFICATION',
-  REMOVE_NOTIFICATION: 'REMOVE_NOTIFICATION',
-  CLEAR_NOTIFICATIONS: 'CLEAR_NOTIFICATIONS',
-  UPDATE_NOTIFICATION: 'UPDATE_NOTIFICATION',
-  
-  // Toasts
-  ADD_TOAST: 'ADD_TOAST',
-  REMOVE_TOAST: 'REMOVE_TOAST',
-  CLEAR_TOASTS: 'CLEAR_TOASTS',
-  SET_TOAST_POSITION: 'SET_TOAST_POSITION',
-  
-  // Modals
-  OPEN_MODAL: 'OPEN_MODAL',
-  CLOSE_MODAL: 'CLOSE_MODAL',
-  UPDATE_MODAL: 'UPDATE_MODAL',
-  CLOSE_ALL_MODALS: 'CLOSE_ALL_MODALS',
-  
-  // Sidebar
-  TOGGLE_SIDEBAR: 'TOGGLE_SIDEBAR',
-  SET_SIDEBAR_STATE: 'SET_SIDEBAR_STATE',
-  TOGGLE_SIDEBAR_PIN: 'TOGGLE_SIDEBAR_PIN',
-  SET_SIDEBAR_WIDTH: 'SET_SIDEBAR_WIDTH',
-  
-  // Theme
-  SET_THEME_MODE: 'SET_THEME_MODE',
-  SET_THEME_COLOR: 'SET_THEME_COLOR',
-  SET_FONT_SIZE: 'SET_FONT_SIZE',
-  SET_DENSITY: 'SET_DENSITY',
-  TOGGLE_HIGH_CONTRAST: 'TOGGLE_HIGH_CONTRAST',
-  
-  // Layout
-  UPDATE_LAYOUT: 'UPDATE_LAYOUT',
-  RESET_LAYOUT: 'RESET_LAYOUT',
-  
-  // Focus management
-  SET_FOCUS: 'SET_FOCUS',
-  CLEAR_FOCUS: 'CLEAR_FOCUS',
-  TOGGLE_FOCUS_TRAP: 'TOGGLE_FOCUS_TRAP',
-  ADD_TO_FOCUS_HISTORY: 'ADD_TO_FOCUS_HISTORY',
-  
-  // Accessibility
-  UPDATE_ACCESSIBILITY: 'UPDATE_ACCESSIBILITY',
-  TOGGLE_REDUCE_MOTION: 'TOGGLE_REDUCE_MOTION',
-  ENABLE_SCREEN_READER: 'ENABLE_SCREEN_READER',
-  ENABLE_KEYBOARD_NAV: 'ENABLE_KEYBOARD_NAV',
-  
-  // Performance
-  UPDATE_PERFORMANCE: 'UPDATE_PERFORMANCE',
-  TOGGLE_ANIMATIONS: 'TOGGLE_ANIMATIONS',
-  
-  // Preferences
-  UPDATE_PREFERENCES: 'UPDATE_PREFERENCES',
-  RESET_PREFERENCES: 'RESET_PREFERENCES',
-  
-  // Error boundary
-  SET_ERROR_BOUNDARY: 'SET_ERROR_BOUNDARY',
-  CLEAR_ERROR_BOUNDARY: 'CLEAR_
+export default UIContext;
